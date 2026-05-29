@@ -30,16 +30,21 @@ def format_daily_report(analyses: List[Dict]) -> str:
         return "📊 За цей день немає діалогів для аналізу."
 
     date_str = analyses[0]["dialog_date"]
-    by_manager = _group_by_manager(analyses)
+
+    # Розділяємо аналізовані і пропущені (скіпнуті short-діалоги без оцінки)
+    analyzed = [a for a in analyses if a.get("overall_score") is not None]
+    skipped = [a for a in analyses if a.get("overall_score") is None]
+
+    by_manager = _group_by_manager(analyzed)
 
     total_dialogs = len(analyses)
     total_orders = sum(1 for a in analyses if a.get("has_order"))
     conv = (total_orders / total_dialogs * 100) if total_dialogs else 0
-    team_score = _avg(analyses, "overall_score")
+    team_score = _avg(analyzed, "overall_score") if analyzed else 0
 
     critical_alerts = []
     warning_alerts = []
-    for a in analyses:
+    for a in analyzed:
         for alert in (a.get("alerts") or []):
             entry = {**alert, "manager": a["manager_name"], "client": a.get("client_username")}
             if alert.get("type") == "critical":
@@ -51,7 +56,7 @@ def format_daily_report(analyses: List[Dict]) -> str:
         f"📊 <b>Звіт за {date_str}</b>",
         "",
         "<b>ЗАГАЛЬНІ ПОКАЗНИКИ</b>",
-        f"• Діалогів: <b>{total_dialogs}</b>",
+        f"• Діалогів: <b>{total_dialogs}</b> (проаналізовано {len(analyzed)}, короткі/skip {len(skipped)})",
         f"• Замовлень: <b>{total_orders}</b> (Conv {conv:.0f}%)",
         f"• Середня оцінка команди: <b>{team_score}/10</b>",
         f"• Алертів: 🔴 {len(critical_alerts)} | 🟡 {len(warning_alerts)}",

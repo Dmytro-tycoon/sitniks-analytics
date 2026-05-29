@@ -4,24 +4,14 @@ from datetime import datetime
 
 from src.sitniks.client import SitniksClient
 from src.sitniks.parser import format_dialog_for_claude
-from src.claude.client import ClaudeAnalyzer
+from src.claude.batch import ClaudeBatchAnalyzer
 from src.analyzer.metrics import calculate_metrics
+from src.analyzer.filter import should_analyze
 from src.database.supabase_client import save_analysis
 
 
-async def analyze_one_chat(chat: Dict, sitniks: SitniksClient, claude: ClaudeAnalyzer) -> Dict:
-    messages = await sitniks.get_chat_messages(chat["id"])
-
-    metrics = calculate_metrics(chat, messages)
-    dialog_text = format_dialog_for_claude(messages)
-
-    qualitative = await claude.analyze_dialog(
-        dialog_text=dialog_text,
-        manager_name=chat.get("assignedManagerName", "Невідомо"),
-        chat_status=chat.get("status", ""),
-        started_at=chat.get("createdAt", ""),
-    )
-
+def build_record(chat: Dict, messages: List[Dict], metrics: Dict, qualitative: Dict = None, skip_reason: str = None) -> Dict:
+    """Будуємо запис для Supabase. qualitative=None для skip-діалогів."""
     record = {
         "dialog_id": chat["id"],
         "dialog_date": chat.get("createdAt", "")[:10],
@@ -38,49 +28,107 @@ async def analyze_one_chat(chat: Dict, sitniks: SitniksClient, claude: ClaudeAna
         "max_response_minutes": metrics["response_times"]["max"],
         "first_response_minutes": metrics["response_times"]["first"],
         "duration_minutes": metrics["duration_minutes"],
-
-        "scores": qualitative.get("scores"),
-        "overall_score": qualitative.get("overall_score"),
-        "alerts": qualitative.get("alerts"),
-        "strengths": qualitative.get("strengths"),
-        "improvements": qualitative.get("improvements"),
-        "summary": qualitative.get("summary"),
-        "is_template_dialog": qualitative.get("is_template_dialog", False),
     }
-
-    save_analysis(record)
+    if qualitative:
+        record.update({
+            "scores": qualitative.get("scores"),
+            "overall_score": qualitative.get("overall_score"),
+            "alerts": qualitative.get("alerts"),
+            "strengths": qualitative.get("strengths"),
+            "improvements": qualitative.get("improvements"),
+            "summary": qualitative.get("summary"),
+            "is_template_dialog": qualitative.get("is_template_dialog", False),
+        })
+    else:
+        record.update({
+            "scores": None,
+            "overall_score": None,
+            "alerts": [],
+            "strengths": [],
+            "improvements": [],
+            "summary": f"[SKIP: {skip_reason}] діалог не аналізовано",
+            "is_template_dialog": False,
+        })
     return record
 
 
-async def analyze_period(date_from: datetime, date_to: datetime, max_chats: int = None, concurrency: int = 2):
+async def analyze_period(date_from: datetime, date_to: datetime, max_chats: int = None):
+    """Основний цикл: тягне діалоги, фільтрує, аналізує батчем, зберігає."""
     sitniks = SitniksClient()
-    claude = ClaudeAnalyzer()
-
     chats = await sitniks.get_all_chats(date_from, date_to)
     if max_chats:
         chats = chats[:max_chats]
 
-    print(f"Аналізую {len(chats)} чатів...")
+    print(f"Отримано {len(chats)} чатів. Завантажую повідомлення...")
 
-    sem = asyncio.Semaphore(concurrency)
-    results = []
-    failed = 0
+    # Паралельно тягнемо повідомлення для всіх чатів
+    sem = asyncio.Semaphore(10)
 
-    async def with_limit(chat):
-        nonlocal failed
+    async def load(chat):
         async with sem:
             try:
-                r = await analyze_one_chat(chat, sitniks, claude)
-                print(f"  ✅ {chat.get('assignedManagerName', '?')} — {r['overall_score']}/10")
-                return r
+                return chat, await sitniks.get_chat_messages(chat["id"])
             except Exception as e:
-                failed += 1
-                print(f"  ❌ {chat.get('id')}: {e}")
-                return None
+                print(f"❌ {chat['id']}: {e}")
+                return chat, None
 
-    results = await asyncio.gather(*[with_limit(c) for c in chats])
-    results = [r for r in results if r is not None]
-
+    loaded = await asyncio.gather(*[load(c) for c in chats])
     await sitniks.close()
-    print(f"\n✅ Готово: {len(results)} проаналізовано, {failed} помилок")
-    return results
+
+    # Фільтруємо
+    batch_items = []
+    skipped_records = []
+    chat_data = {}  # chat_id -> (chat, messages, metrics)
+
+    for chat, messages in loaded:
+        if messages is None:
+            continue
+
+        metrics = calculate_metrics(chat, messages)
+        chat_data[chat["id"]] = (chat, messages, metrics)
+
+        ok, reason = should_analyze(messages)
+        if not ok:
+            skipped_records.append(build_record(chat, messages, metrics, skip_reason=reason))
+            continue
+
+        batch_items.append({
+            "custom_id": chat["id"],
+            "manager_name": chat.get("assignedManagerName", "Невідомо"),
+            "chat_status": chat.get("status", ""),
+            "started_at": chat.get("createdAt", ""),
+            "dialog_text": format_dialog_for_claude(messages),
+        })
+
+    print(f"✅ До аналізу: {len(batch_items)} | Пропущено: {len(skipped_records)}")
+
+    # Зберігаємо пропущені
+    for rec in skipped_records:
+        try:
+            save_analysis(rec)
+        except Exception as e:
+            print(f"❌ save skip {rec['dialog_id']}: {e}")
+
+    if not batch_items:
+        print("Нема що аналізувати")
+        return []
+
+    # Відправляємо batch і чекаємо
+    batch = ClaudeBatchAnalyzer()
+    results = await batch.analyze_batch(batch_items)
+
+    # Зберігаємо
+    saved = 0
+    for chat_id, qualitative in results.items():
+        if qualitative is None:
+            continue
+        chat, messages, metrics = chat_data[chat_id]
+        rec = build_record(chat, messages, metrics, qualitative=qualitative)
+        try:
+            save_analysis(rec)
+            saved += 1
+        except Exception as e:
+            print(f"❌ save {chat_id}: {e}")
+
+    print(f"\n✅ Збережено: {saved} аналізів + {len(skipped_records)} skip-записів")
+    return saved
