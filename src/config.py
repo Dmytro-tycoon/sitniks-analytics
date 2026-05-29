@@ -1,0 +1,33 @@
+import json
+from dotenv import load_dotenv
+from pathlib import Path
+import os
+
+_root = Path(__file__).parent.parent
+load_dotenv(_root / ".env", override=True)
+
+
+class Settings:
+    @property
+    def SITNIKS_API_KEY(self): return os.getenv("SITNIKS_API_KEY", "")
+    @property
+    def SITNIKS_API_URL(self): return os.getenv("SITNIKS_API_URL", "")
+    @property
+    def ANTHROPIC_API_KEY(self): return os.getenv("ANTHROPIC_API_KEY", "")
+    @property
+    def TELEGRAM_BOT_TOKEN(self): return os.getenv("TELEGRAM_BOT_TOKEN", "")
+    @property
+    def TELEGRAM_LEADERSHIP_CHAT_ID(self): return int(os.getenv("TELEGRAM_LEADERSHIP_CHAT_ID") or "0")
+    @property
+    def TELEGRAM_MANAGERS(self): return json.loads(os.getenv("TELEGRAM_MANAGERS", "{}"))
+    @property
+    def SUPABASE_URL(self): return os.getenv("SUPABASE_URL", "")
+    @property
+    def SUPABASE_SERVICE_KEY(self): return os.getenv("SUPABASE_SERVICE_KEY", "")
+    @property
+    def ANALYSIS_TIMEZONE(self): return os.getenv("ANALYSIS_TIMEZONE", "Europe/Kiev")
+    @property
+    def DAILY_REPORT_TIME(self): return os.getenv("DAILY_REPORT_TIME", "09:00")
+
+
+settings = Settings()
