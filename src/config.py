@@ -21,6 +21,10 @@ class Settings:
     @property
     def TELEGRAM_MANAGERS(self): return json.loads(os.getenv("TELEGRAM_MANAGERS", "{}"))
     @property
+    def TELEGRAM_SHADOW_CHAT_ID(self):
+        v = os.getenv("TELEGRAM_SHADOW_CHAT_ID", "")
+        return int(v) if v else None
+    @property
     def SUPABASE_URL(self): return os.getenv("SUPABASE_URL", "")
     @property
     def SUPABASE_SERVICE_KEY(self): return os.getenv("SUPABASE_SERVICE_KEY", "")

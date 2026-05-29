@@ -107,16 +107,20 @@ async def send_daily_reports(date_str: str = None):
         except Exception as e:
             print(f"Помилка надсилання звіту керівництву: {e}")
 
-    # Особисті звіти
-    managers_map = settings.TELEGRAM_MANAGERS  # {"Єлизавета": 123456}
+    # Особисті звіти. Якщо TELEGRAM_SHADOW_CHAT_ID встановлено -
+    # перенаправляємо всі звіти туди (для preview перед запуском менеджерам)
+    managers_map = settings.TELEGRAM_MANAGERS
+    shadow = settings.TELEGRAM_SHADOW_CHAT_ID
     for manager_name, chat_id in managers_map.items():
         m_data = [a for a in analyses if manager_name.lower() in a["manager_name"].lower()]
         if not m_data:
             continue
+        target = shadow or chat_id
+        prefix = f"📋 <i>Звіт для {manager_name}</i>\n\n" if shadow else ""
         try:
             await bot.send_message(
-                chat_id,
-                format_manager_report(manager_name, m_data),
+                target,
+                prefix + format_manager_report(manager_name, m_data),
                 parse_mode="HTML",
             )
         except Exception as e:
