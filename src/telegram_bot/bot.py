@@ -13,6 +13,8 @@ dp = Dispatcher()
 
 
 def _remember(message: Message):
+    import sys
+    print(f"[remember] chat_id={message.chat.id} from={message.from_user.username if message.from_user else None}", flush=True)
     try:
         upsert_telegram_user(
             chat_id=message.chat.id,
@@ -22,8 +24,11 @@ def _remember(message: Message):
             chat_type=message.chat.type,
             chat_title=message.chat.title,
         )
+        print(f"[remember] saved OK: {message.chat.id}", flush=True)
     except Exception as e:
-        print(f"upsert_telegram_user failed: {e}")
+        print(f"[remember] FAILED for {message.chat.id}: {type(e).__name__}: {e}", flush=True)
+        import traceback; traceback.print_exc()
+        sys.stdout.flush()
 
 
 @dp.message(Command("start"))
