@@ -12,25 +12,23 @@ bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
 dp = Dispatcher()
 
 
-@dp.message.middleware()
-async def remember_user(handler, event, data):
-    """Автоматично зберігаємо всіх, хто пише боту."""
+def _remember(message: Message):
     try:
         upsert_telegram_user(
-            chat_id=event.chat.id,
-            username=event.from_user.username if event.from_user else None,
-            first_name=event.from_user.first_name if event.from_user else None,
-            last_name=event.from_user.last_name if event.from_user else None,
-            chat_type=event.chat.type,
-            chat_title=event.chat.title,
+            chat_id=message.chat.id,
+            username=message.from_user.username if message.from_user else None,
+            first_name=message.from_user.first_name if message.from_user else None,
+            last_name=message.from_user.last_name if message.from_user else None,
+            chat_type=message.chat.type,
+            chat_title=message.chat.title,
         )
     except Exception as e:
         print(f"upsert_telegram_user failed: {e}")
-    return await handler(event, data)
 
 
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
+    _remember(message)
     await message.answer(
         "👋 Привіт! Я бот аналітики Sitniks.\n\n"
         "Команди:\n"
@@ -44,6 +42,7 @@ async def cmd_start(message: Message):
 
 @dp.message(Command("whoami"))
 async def cmd_whoami(message: Message):
+    _remember(message)
     await message.answer(
         f"chat_id: <code>{message.chat.id}</code>\n"
         f"type: {message.chat.type}\n"
@@ -117,6 +116,12 @@ async def send_daily_reports(date_str: str = None):
             )
         except Exception as e:
             print(f"Помилка надсилання звіту {manager_name}: {e}")
+
+
+@dp.message()
+async def catch_all(message: Message):
+    """Запам'ятовуємо будь-кого, хто пише боту, навіть без команди."""
+    _remember(message)
 
 
 async def run_bot():
