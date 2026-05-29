@@ -1,5 +1,6 @@
 import json
-from anthropic import AsyncAnthropic
+import asyncio
+from anthropic import AsyncAnthropic, RateLimitError
 from src.config import settings
 from src.claude.prompts import SYSTEM_PROMPT, ANALYSIS_PROMPT
 
@@ -23,18 +24,28 @@ class ClaudeAnalyzer:
             dialog_text=dialog_text,
         )
 
-        response = await self.client.messages.create(
-            model=self.model,
-            max_tokens=4000,
-            system=[
-                {
-                    "type": "text",
-                    "text": SYSTEM_PROMPT,
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ],
-            messages=[{"role": "user", "content": prompt}],
-        )
+        # Retry з експоненційним backoff при rate-limit
+        backoff = 15
+        for attempt in range(6):
+            try:
+                response = await self.client.messages.create(
+                    model=self.model,
+                    max_tokens=3000,
+                    system=[
+                        {
+                            "type": "text",
+                            "text": SYSTEM_PROMPT,
+                            "cache_control": {"type": "ephemeral"},
+                        }
+                    ],
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                break
+            except RateLimitError:
+                if attempt == 5:
+                    raise
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 120)
 
         text = response.content[0].text.strip()
         # Прибираємо markdown-обгортку ```json ... ``` якщо є

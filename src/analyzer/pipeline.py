@@ -52,7 +52,7 @@ async def analyze_one_chat(chat: Dict, sitniks: SitniksClient, claude: ClaudeAna
     return record
 
 
-async def analyze_period(date_from: datetime, date_to: datetime, max_chats: int = None, concurrency: int = 5):
+async def analyze_period(date_from: datetime, date_to: datetime, max_chats: int = None, concurrency: int = 2):
     sitniks = SitniksClient()
     claude = ClaudeAnalyzer()
 
