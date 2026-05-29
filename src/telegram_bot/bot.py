@@ -6,10 +6,27 @@ from aiogram.types import Message
 
 from src.config import settings
 from src.telegram_bot.reports import format_daily_report, format_manager_report
-from src.database.supabase_client import get_analyses_by_date
+from src.database.supabase_client import get_analyses_by_date, upsert_telegram_user
 
 bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
 dp = Dispatcher()
+
+
+@dp.message.middleware()
+async def remember_user(handler, event, data):
+    """Автоматично зберігаємо всіх, хто пише боту."""
+    try:
+        upsert_telegram_user(
+            chat_id=event.chat.id,
+            username=event.from_user.username if event.from_user else None,
+            first_name=event.from_user.first_name if event.from_user else None,
+            last_name=event.from_user.last_name if event.from_user else None,
+            chat_type=event.chat.type,
+            chat_title=event.chat.title,
+        )
+    except Exception as e:
+        print(f"upsert_telegram_user failed: {e}")
+    return await handler(event, data)
 
 
 @dp.message(Command("start"))

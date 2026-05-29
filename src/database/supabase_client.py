@@ -28,6 +28,24 @@ def get_criteria() -> str:
     return result.data[0]["content"] if result.data else ""
 
 
+def upsert_telegram_user(chat_id: int, username: str = None, first_name: str = None,
+                          last_name: str = None, chat_type: str = None, chat_title: str = None):
+    from datetime import datetime, timezone
+    return get_client().table("telegram_users").upsert({
+        "chat_id": chat_id,
+        "username": username,
+        "first_name": first_name,
+        "last_name": last_name,
+        "chat_type": chat_type,
+        "chat_title": chat_title,
+        "last_seen_at": datetime.now(timezone.utc).isoformat(),
+    }, on_conflict="chat_id").execute()
+
+
+def list_telegram_users():
+    return get_client().table("telegram_users").select("*").order("first_seen_at").execute()
+
+
 def save_daily_report(date_str: str, aggregated: dict):
     return get_client().table("daily_reports").upsert({
         "report_date": date_str,
