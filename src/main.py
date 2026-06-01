@@ -6,7 +6,9 @@ from src.scheduler.jobs import setup_scheduler
 async def main():
     scheduler = setup_scheduler()
     scheduler.start()
-    print("Scheduler started (daily analysis at 09:00 Kiev)")
+    # Виводимо коли реально стрельне наступний раз
+    job = scheduler.get_job("daily_analysis")
+    print(f"Scheduler started. Next daily analysis: {job.next_run_time}")
     print("Telegram bot starting...")
     await dp.start_polling(bot)
 
