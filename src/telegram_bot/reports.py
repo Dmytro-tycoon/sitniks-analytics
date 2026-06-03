@@ -101,6 +101,20 @@ def format_daily_report(analyses: List[Dict]) -> str:
             if a.get("quote"):
                 lines.append(f"  «{a['quote'][:150]}»")
 
+    # Окремо: чати де менеджер не відповів жодного слова
+    ignored = [a for a in skipped if (a.get("messages_from_manager") or 0) == 0]
+    if ignored:
+        lines.append(f"\n🔇 <b>МЕНЕДЖЕР НЕ ВІДПОВІВ</b> ({len(ignored)})")
+        # Групуємо за менеджером якому призначено чат
+        by_assigned = {}
+        for a in ignored:
+            by_assigned.setdefault(a["manager_name"], []).append(a)
+        for manager, items in sorted(by_assigned.items(), key=lambda kv: -len(kv[1])):
+            lines.append(f"• <b>{manager}</b> — {len(items)} чат(ів)")
+            for i in items[:5]:
+                client = i.get("client_username") or i.get("client_name") or "—"
+                lines.append(f"   ↳ @{client} (msg клієнта: {i.get('messages_count', 0)})")
+
     return "\n".join(lines)
 
 
