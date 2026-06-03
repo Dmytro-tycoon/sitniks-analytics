@@ -53,13 +53,36 @@ def build_record(chat: Dict, messages: List[Dict], metrics: Dict, qualitative: D
 
 
 async def analyze_period(date_from: datetime, date_to: datetime, max_chats: int = None):
-    """Основний цикл: тягне діалоги, фільтрує, аналізує батчем, зберігає."""
+    """Основний цикл: тягне нові чати + чати-з-замовленням, фільтрує, аналізує батчем, зберігає."""
     sitniks = SitniksClient()
-    chats = await sitniks.get_all_chats(date_from, date_to)
+
+    # 1. Нові чати (firstMessage у вікні) - як Sitniks показує "Нові"
+    new_chats = await sitniks.get_all_chats(date_from, date_to, by_first_message=True)
+    new_chat_ids = {c["id"] for c in new_chats}
+    print(f"Нових чатів (firstMessage window): {len(new_chats)}")
+
+    # 2. Замовлення за день - беремо chatId-и які не входять у новi
+    orders = await sitniks.get_orders(date_from, date_to)
+    existing_with_order_ids = {o["chatId"] for o in orders if o.get("chatId") and o["chatId"] not in new_chat_ids}
+    print(f"Замовлень {len(orders)}, з них з ДІЮЧИХ чатів: {len(existing_with_order_ids)}")
+
+    # 3. Тягнемо деталі діючих чатів з замовленням
+    existing_chats = []
+    sem = asyncio.Semaphore(10)
+    async def fetch_chat(cid):
+        async with sem:
+            try:
+                return await sitniks.get_chat(cid)
+            except Exception as e:
+                print(f"❌ chat {cid}: {e}")
+                return None
+    existing_chats_raw = await asyncio.gather(*[fetch_chat(cid) for cid in existing_with_order_ids])
+    existing_chats = [c for c in existing_chats_raw if c]
+
+    chats = new_chats + existing_chats
     if max_chats:
         chats = chats[:max_chats]
-
-    print(f"Отримано {len(chats)} чатів. Завантажую повідомлення...")
+    print(f"Усього на аналіз: {len(chats)} (нові: {len(new_chats)} + діючі з замовленням: {len(existing_chats)})")
 
     # Паралельно тягнемо повідомлення для всіх чатів
     sem = asyncio.Semaphore(10)

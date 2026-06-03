@@ -91,20 +91,47 @@ async def cmd_manager(message: Message):
     await message.answer(format_manager_report(name, manager_data), parse_mode="HTML")
 
 
-async def _fetch_orders_by_manager(date_str: str) -> dict:
-    """Тягне замовлення за день і повертає {manager_fullname: count}."""
+async def _fetch_day_stats(date_str: str) -> dict:
+    """Тягне нові чати, замовлення; рахує per-manager: новi+діючі-з-замовленням і orders."""
     from datetime import datetime
     start = datetime.fromisoformat(f"{date_str}T00:00:00+03:00")
     end = start + timedelta(days=1)
     sitniks = SitniksClient()
     try:
+        new_chats = await sitniks.get_all_chats(start, end, by_first_message=True)
         orders = await sitniks.get_orders(start, end)
     finally:
         await sitniks.close()
-    return Counter(
-        o.get("responsible", {}).get("user", {}).get("fullname")
-        for o in orders if o.get("responsible")
-    )
+
+    new_ids = {c["id"] for c in new_chats}
+    orders_by_manager = Counter()
+    new_by_manager = Counter()
+    existing_with_order_by_manager = Counter()
+
+    for c in new_chats:
+        m = c.get("assignedManagerName")
+        if m:
+            new_by_manager[m] += 1
+
+    for o in orders:
+        m = o.get("responsible", {}).get("user", {}).get("fullname")
+        if not m:
+            continue
+        orders_by_manager[m] += 1
+        chat_id = o.get("chatId")
+        if chat_id and chat_id not in new_ids:
+            existing_with_order_by_manager[m] += 1
+
+    # Загальна кількість діалогів = нові + діючі з замовленням
+    total_by_manager = {m: new_by_manager[m] + existing_with_order_by_manager[m]
+                        for m in set(list(new_by_manager) + list(existing_with_order_by_manager))}
+
+    return {
+        "orders": dict(orders_by_manager),
+        "new_chats": dict(new_by_manager),
+        "existing_with_order": dict(existing_with_order_by_manager),
+        "total_chats": total_by_manager,
+    }
 
 
 async def send_daily_reports(date_str: str = None):
@@ -115,18 +142,19 @@ async def send_daily_reports(date_str: str = None):
     res = get_analyses_by_date(date_str)
     analyses = res.data
 
-    # Реальна кількість замовлень з Sitniks (по responsible)
+    # Статистика з Sitniks (orders + new chats)
     try:
-        orders_by_manager = dict(await _fetch_orders_by_manager(date_str))
+        stats = await _fetch_day_stats(date_str)
     except Exception as e:
-        print(f"Помилка отримання замовлень: {e}")
-        orders_by_manager = {}
+        print(f"Помилка отримання статистики Sitniks: {e}")
+        stats = {"orders": {}, "new_chats": {}, "existing_with_order": {}, "total_chats": {}}
+    orders_by_manager = stats["orders"]
 
     if settings.TELEGRAM_LEADERSHIP_CHAT_ID:
         try:
             await bot.send_message(
                 settings.TELEGRAM_LEADERSHIP_CHAT_ID,
-                format_daily_report(analyses, orders_by_manager=orders_by_manager),
+                format_daily_report(analyses, orders_by_manager=orders_by_manager, total_chats_by_manager=stats["total_chats"]),
                 parse_mode="HTML",
             )
         except Exception as e:
@@ -140,14 +168,15 @@ async def send_daily_reports(date_str: str = None):
         m_data = [a for a in analyses if manager_name.lower() in a["manager_name"].lower()]
         if not m_data:
             continue
-        # Знаходимо число замовлень — повне ім'я в Sitniks може мати суфікс "2"
+        # Знаходимо число замовлень і діалогів — повне ім'я в Sitniks може мати суфікс "2"
         m_orders = sum(c for fn, c in orders_by_manager.items() if fn and manager_name.lower() in fn.lower())
+        m_total_chats = sum(c for fn, c in stats["total_chats"].items() if fn and manager_name.lower() in fn.lower())
         target = shadow or chat_id
         prefix = f"📋 <i>Звіт для {manager_name}</i>\n\n" if shadow else ""
         try:
             await bot.send_message(
                 target,
-                prefix + format_manager_report(manager_name, m_data, orders_count=m_orders),
+                prefix + format_manager_report(manager_name, m_data, orders_count=m_orders, total_chats=m_total_chats),
                 parse_mode="HTML",
             )
         except Exception as e:
