@@ -25,10 +25,11 @@ def _criterion_avg(items: List[Dict], crit: str) -> float:
     return round(sum(vals) / len(vals), 1) if vals else 0
 
 
-def format_daily_report(analyses: List[Dict]) -> str:
+def format_daily_report(analyses: List[Dict], orders_by_manager: Dict[str, int] = None) -> str:
     if not analyses:
         return "📊 За цей день немає діалогів для аналізу."
 
+    orders_by_manager = orders_by_manager or {}
     date_str = analyses[0]["dialog_date"]
 
     # Розділяємо аналізовані і пропущені (скіпнуті short-діалоги без оцінки)
@@ -38,7 +39,7 @@ def format_daily_report(analyses: List[Dict]) -> str:
     by_manager = _group_by_manager(analyzed)
 
     total_dialogs = len(analyses)
-    total_orders = sum(1 for a in analyses if a.get("has_order"))
+    total_orders = sum(orders_by_manager.values())
     conv = (total_orders / total_dialogs * 100) if total_dialogs else 0
     team_score = _avg(analyzed, "overall_score") if analyzed else 0
 
@@ -73,7 +74,8 @@ def format_daily_report(analyses: List[Dict]) -> str:
     for i, (manager, items) in enumerate(ranked):
         medal = MEDALS[i] if i < len(MEDALS) else f"{i+1}."
         score = _avg(items, "overall_score")
-        orders = sum(1 for x in items if x.get("has_order"))
+        # Шукаємо менеджера в orders_by_manager (з урахуванням можливого суфіксу "2")
+        orders = sum(c for fn, c in orders_by_manager.items() if fn and manager.lower() in fn.lower())
         m_conv = orders / len(items) * 100 if items else 0
 
         # Сильна/слабка сторона
@@ -118,13 +120,13 @@ def format_daily_report(analyses: List[Dict]) -> str:
     return "\n".join(lines)
 
 
-def format_manager_report(manager_name: str, analyses: List[Dict], rank: int = None, team_size: int = None) -> str:
+def format_manager_report(manager_name: str, analyses: List[Dict], rank: int = None, team_size: int = None, orders_count: int = None) -> str:
     if not analyses:
         return f"👋 Привіт, {manager_name}! За вчора немає аналізованих діалогів."
 
     date_str = analyses[0]["dialog_date"]
     total = len(analyses)
-    orders = sum(1 for a in analyses if a.get("has_order"))
+    orders = orders_count if orders_count is not None else sum(1 for a in analyses if a.get("has_order"))
     conv = orders / total * 100 if total else 0
     score = _avg(analyses, "overall_score")
 

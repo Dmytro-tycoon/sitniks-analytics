@@ -67,5 +67,31 @@ class SitniksClient:
         response.raise_for_status()
         return response.json()
 
+    async def get_orders(self, date_from: datetime, date_to: datetime) -> List[Dict]:
+        """Тягнемо всі замовлення за період (через пагінацію)."""
+        all_orders = []
+        skip = 0
+        limit = 50
+        while True:
+            params = {
+                "createdAtFrom": date_from.isoformat(),
+                "createdAtTo": date_to.isoformat(),
+                "limit": limit,
+                "skip": skip,
+            }
+            response = await self.client.get(
+                f"{self.base_url}/orders",
+                headers=self.headers,
+                params=params,
+            )
+            response.raise_for_status()
+            data = response.json()
+            orders = data.get("data", [])
+            all_orders.extend(orders)
+            if len(all_orders) >= data.get("count", 0) or not orders:
+                break
+            skip += limit
+        return all_orders
+
     async def close(self):
         await self.client.aclose()

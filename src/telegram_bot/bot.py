@@ -4,9 +4,11 @@ from aiogram import Bot, Dispatcher
 from aiogram.filters import Command
 from aiogram.types import Message
 
+from collections import Counter
 from src.config import settings
 from src.telegram_bot.reports import format_daily_report, format_manager_report
 from src.database.supabase_client import get_analyses_by_date, upsert_telegram_user
+from src.sitniks.client import SitniksClient
 
 bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
 dp = Dispatcher()
@@ -89,6 +91,22 @@ async def cmd_manager(message: Message):
     await message.answer(format_manager_report(name, manager_data), parse_mode="HTML")
 
 
+async def _fetch_orders_by_manager(date_str: str) -> dict:
+    """Тягне замовлення за день і повертає {manager_fullname: count}."""
+    from datetime import datetime
+    start = datetime.fromisoformat(f"{date_str}T00:00:00+03:00")
+    end = start + timedelta(days=1)
+    sitniks = SitniksClient()
+    try:
+        orders = await sitniks.get_orders(start, end)
+    finally:
+        await sitniks.close()
+    return Counter(
+        o.get("responsible", {}).get("user", {}).get("fullname")
+        for o in orders if o.get("responsible")
+    )
+
+
 async def send_daily_reports(date_str: str = None):
     """Викликається з cron щоранку"""
     if date_str is None:
@@ -97,11 +115,18 @@ async def send_daily_reports(date_str: str = None):
     res = get_analyses_by_date(date_str)
     analyses = res.data
 
+    # Реальна кількість замовлень з Sitniks (по responsible)
+    try:
+        orders_by_manager = dict(await _fetch_orders_by_manager(date_str))
+    except Exception as e:
+        print(f"Помилка отримання замовлень: {e}")
+        orders_by_manager = {}
+
     if settings.TELEGRAM_LEADERSHIP_CHAT_ID:
         try:
             await bot.send_message(
                 settings.TELEGRAM_LEADERSHIP_CHAT_ID,
-                format_daily_report(analyses),
+                format_daily_report(analyses, orders_by_manager=orders_by_manager),
                 parse_mode="HTML",
             )
         except Exception as e:
@@ -115,12 +140,14 @@ async def send_daily_reports(date_str: str = None):
         m_data = [a for a in analyses if manager_name.lower() in a["manager_name"].lower()]
         if not m_data:
             continue
+        # Знаходимо число замовлень — повне ім'я в Sitniks може мати суфікс "2"
+        m_orders = sum(c for fn, c in orders_by_manager.items() if fn and manager_name.lower() in fn.lower())
         target = shadow or chat_id
         prefix = f"📋 <i>Звіт для {manager_name}</i>\n\n" if shadow else ""
         try:
             await bot.send_message(
                 target,
-                prefix + format_manager_report(manager_name, m_data),
+                prefix + format_manager_report(manager_name, m_data, orders_count=m_orders),
                 parse_mode="HTML",
             )
         except Exception as e:
