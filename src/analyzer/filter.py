@@ -6,24 +6,19 @@ def should_analyze(messages: List[Dict]) -> Tuple[bool, str]:
     """
     Повертає (треба_аналізувати, причина_якщо_ні).
     Скіпаємо:
-    - менше 4 повідомлень всього
-    - менеджер не написав жодного повідомлення
-    - клієнт не написав жодного повідомлення (тільки розсилка від менеджера)
-    - сумарний текст менеджера < 50 символів (привітання, не діалог)
+    - менше 2 повідомлень всього
+    - менеджер не написав жодного повідомлення (показуємо окремо у звіті)
+    - клієнт не написав жодного повідомлення (одностороннє привітання — не аналізуємо)
     """
-    if len(messages) < 4:
+    if len(messages) < 2:
         return False, "too_short"
 
-    manager_msgs = [m for m in messages if m.get("managerName")]
-    client_msgs = [m for m in messages if not m.get("managerName")]
+    has_manager = any(m.get("managerName") for m in messages)
+    has_client = any(not m.get("managerName") for m in messages)
 
-    if not manager_msgs:
+    if not has_manager:
         return False, "no_manager_response"
-    if not client_msgs:
+    if not has_client:
         return False, "no_client_message"
-
-    manager_text_len = sum(len((m.get("text") or "").strip()) for m in manager_msgs)
-    if manager_text_len < 50:
-        return False, "manager_text_minimal"
 
     return True, ""
