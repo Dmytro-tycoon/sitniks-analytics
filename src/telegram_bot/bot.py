@@ -1,14 +1,29 @@
 import asyncio
+import re
 from datetime import datetime, timedelta
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.types import (
+    Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup,
+    ForceReply,
+)
 
 from collections import Counter
 from src.config import settings
-from src.telegram_bot.reports import format_daily_report, format_manager_report
-from src.database.supabase_client import get_analyses_by_date, upsert_telegram_user
+from src.telegram_bot.reports import (
+    format_daily_report, format_manager_report, format_review_item, select_review_items,
+)
+from src.database.supabase_client import (
+    get_analyses_by_date, upsert_telegram_user, save_feedback, get_analysis,
+)
 from src.sitniks.client import SitniksClient
+
+
+def _review_keyboard(dialog_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✅ Згоден", callback_data=f"fb:agree:{dialog_id}"),
+        InlineKeyboardButton(text="❌ Не згоден", callback_data=f"fb:disagree:{dialog_id}"),
+    ]])
 
 bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
 dp = Dispatcher()
@@ -156,7 +171,17 @@ async def send_daily_reports(date_str: str = None):
                 settings.TELEGRAM_LEADERSHIP_CHAT_ID,
                 format_daily_report(analyses, orders_by_manager=orders_by_manager, total_chats_by_manager=stats["total_chats"]),
                 parse_mode="HTML",
+                disable_web_page_preview=True,
             )
+            # Окремі повідомлення з кнопками — для good/bad прикладів
+            for item in select_review_items(analyses):
+                await bot.send_message(
+                    settings.TELEGRAM_LEADERSHIP_CHAT_ID,
+                    format_review_item(item),
+                    parse_mode="HTML",
+                    disable_web_page_preview=True,
+                    reply_markup=_review_keyboard(item["dialog_id"]),
+                )
         except Exception as e:
             print(f"Помилка надсилання звіту керівництву: {e}")
 
@@ -181,6 +206,62 @@ async def send_daily_reports(date_str: str = None):
             )
         except Exception as e:
             print(f"Помилка надсилання звіту {manager_name}: {e}")
+
+
+@dp.callback_query(F.data.startswith("fb:"))
+async def cb_feedback(cb: CallbackQuery):
+    """Обробка кнопок Згоден/Не згоден під review-діалогом."""
+    try:
+        _, action, dialog_id = cb.data.split(":", 2)
+    except ValueError:
+        await cb.answer("Bad callback")
+        return
+
+    rec = get_analysis(dialog_id)
+    if not rec:
+        await cb.answer("Діалог не знайдено")
+        return
+
+    if action == "agree":
+        save_feedback(dialog_id, confirmed=True)
+        await cb.message.edit_text(
+            (cb.message.html_text or "") + "\n\n<b>✅ Підтверджено</b>",
+            parse_mode="HTML",
+        )
+        await cb.answer("Зараховано")
+    elif action == "disagree":
+        save_feedback(dialog_id, confirmed=False)
+        # Просимо коментар через ForceReply
+        await cb.message.edit_text(
+            (cb.message.html_text or "") + "\n\n<b>❌ Не згоден</b>",
+            parse_mode="HTML",
+        )
+        await cb.message.reply(
+            f"Напиши <b>reply</b> на це повідомлення з коментарем:\n"
+            f"чому цей діалог насправді нормальний/інший?\n\n"
+            f"🆔 <code>{dialog_id}</code>",
+            parse_mode="HTML",
+            reply_markup=ForceReply(selective=True, input_field_placeholder="Твій коментар…"),
+        )
+        await cb.answer("Чекаю на коментар")
+
+
+_COMMENT_ID_RE = re.compile(r"🆔\s*([0-9a-f]{24})")
+
+
+@dp.message(F.reply_to_message)
+async def cb_comment(message: Message):
+    """Обробка reply на ForceReply: записуємо коментар у БД."""
+    rtm = message.reply_to_message
+    text = rtm.text or rtm.caption or ""
+    m = _COMMENT_ID_RE.search(text)
+    if not m:
+        # Не наш ForceReply — обробляємо як звичайне повідомлення
+        _remember(message)
+        return
+    dialog_id = m.group(1)
+    save_feedback(dialog_id, confirmed=False, comment=message.text)
+    await message.reply(f"💾 Коментар збережено для <code>{dialog_id}</code>", parse_mode="HTML")
 
 
 @dp.message()

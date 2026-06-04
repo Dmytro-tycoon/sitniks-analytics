@@ -135,22 +135,7 @@ def format_daily_report(analyses: List[Dict], orders_by_manager: Dict[str, int] 
     # 🏆 Топ-3 хороші діалоги для прикладу
     good = sorted([a for a in analyzed if a.get("dialog_quality") == "good"],
                   key=lambda a: a.get("overall_score") or 0, reverse=True)[:3]
-    if good:
-        lines.append(f"\n🏆 <b>ХОРОШІ ПРИКЛАДИ</b> ({len(good)})")
-        for a in good:
-            lines.append(f"• <b>{a['manager_name']}</b> → {_format_client(a)} — {a.get('overall_score', '?')}/10")
-            if a.get("quality_reason"):
-                lines.append(f"  ✅ {a['quality_reason'][:200]}")
-
-    # 💔 Топ-3 погані діалоги для розбору
-    bad = sorted([a for a in analyzed if a.get("dialog_quality") == "bad"],
-                 key=lambda a: a.get("overall_score") or 10)[:3]
-    if bad:
-        lines.append(f"\n💔 <b>ДЛЯ РОЗБОРУ</b> ({len(bad)})")
-        for a in bad:
-            lines.append(f"• <b>{a['manager_name']}</b> → {_format_client(a)} — {a.get('overall_score', '?')}/10")
-            if a.get("quality_reason"):
-                lines.append(f"  ⚠️ {a['quality_reason'][:200]}")
+    # Хороші/погані виносимо як окремі повідомлення з кнопками — не в загальний текст
 
     # Окремо: чати де менеджер не відповів жодного слова
     ignored = [a for a in skipped if (a.get("messages_from_manager") or 0) == 0]
@@ -166,6 +151,30 @@ def format_daily_report(analyses: List[Dict], orders_by_manager: Dict[str, int] 
                 lines.append(f"   ↳ {_format_client(i)} (msg клієнта: {i.get('messages_count', 0)})")
 
     return "\n".join(lines)
+
+
+def format_review_item(a: Dict) -> str:
+    """Окреме повідомлення для review (одного good/bad діалогу) — буде з кнопками."""
+    q = a.get("dialog_quality")
+    icon = "🏆" if q == "good" else "💔"
+    label = "ХОРОШИЙ ПРИКЛАД" if q == "good" else "ДЛЯ РОЗБОРУ"
+    score = a.get("overall_score", "?")
+    reason = a.get("quality_reason") or ""
+    return (
+        f"{icon} <b>{label}</b>\n"
+        f"<b>{a['manager_name']}</b> → {_format_client(a)} — {score}/10\n"
+        f"{reason[:400]}"
+    )
+
+
+def select_review_items(analyses: List[Dict], top_good: int = 3, top_bad: int = 3) -> List[Dict]:
+    """Повертає список діалогів для надсилання як окремі повідомлення з кнопками."""
+    analyzed = [a for a in analyses if a.get("overall_score") is not None]
+    good = sorted([a for a in analyzed if a.get("dialog_quality") == "good"],
+                  key=lambda a: a.get("overall_score") or 0, reverse=True)[:top_good]
+    bad = sorted([a for a in analyzed if a.get("dialog_quality") == "bad"],
+                 key=lambda a: a.get("overall_score") or 10)[:top_bad]
+    return good + bad
 
 
 def format_manager_report(manager_name: str, analyses: List[Dict], rank: int = None,

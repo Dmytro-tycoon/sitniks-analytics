@@ -46,6 +46,22 @@ def list_telegram_users():
     return get_client().table("telegram_users").select("*").order("first_seen_at").execute()
 
 
+def save_feedback(dialog_id: str, confirmed: bool, comment: str = None):
+    from datetime import datetime, timezone
+    payload = {
+        "user_confirmed": confirmed,
+        "user_feedback_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if comment is not None:
+        payload["user_comment"] = comment
+    return get_client().table("dialog_analyses").update(payload).eq("dialog_id", dialog_id).execute()
+
+
+def get_analysis(dialog_id: str):
+    res = get_client().table("dialog_analyses").select("*").eq("dialog_id", dialog_id).execute()
+    return res.data[0] if res.data else None
+
+
 def save_daily_report(date_str: str, aggregated: dict):
     return get_client().table("daily_reports").upsert({
         "report_date": date_str,
