@@ -38,6 +38,8 @@ def build_record(chat: Dict, messages: List[Dict], metrics: Dict, qualitative: D
             "improvements": qualitative.get("improvements"),
             "summary": qualitative.get("summary"),
             "is_template_dialog": qualitative.get("is_template_dialog", False),
+            "dialog_quality": qualitative.get("dialog_quality"),
+            "quality_reason": qualitative.get("quality_reason"),
         })
     else:
         record.update({

@@ -49,6 +49,8 @@ def normalize_result(raw: dict) -> dict:
         "improvements": [],
         "summary": raw.get("summary", ""),
         "is_template_dialog": raw.get("is_template_dialog", False),
+        "dialog_quality": raw.get("dialog_quality") if raw.get("dialog_quality") in ("good", "bad", "neutral") else "neutral",
+        "quality_reason": raw.get("quality_reason", ""),
     }
 
 

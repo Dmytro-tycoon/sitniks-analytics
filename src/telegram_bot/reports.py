@@ -106,6 +106,28 @@ def format_daily_report(analyses: List[Dict], orders_by_manager: Dict[str, int] 
             if a.get("quote"):
                 lines.append(f"  «{a['quote'][:150]}»")
 
+    # 🏆 Топ-3 хороші діалоги для прикладу
+    good = sorted([a for a in analyzed if a.get("dialog_quality") == "good"],
+                  key=lambda a: a.get("overall_score") or 0, reverse=True)[:3]
+    if good:
+        lines.append(f"\n🏆 <b>ХОРОШІ ПРИКЛАДИ</b> ({len(good)})")
+        for a in good:
+            client = a.get("client_username") or a.get("client_name") or "—"
+            lines.append(f"• <b>{a['manager_name']}</b> → @{client} — {a.get('overall_score', '?')}/10")
+            if a.get("quality_reason"):
+                lines.append(f"  ✅ {a['quality_reason'][:200]}")
+
+    # 💔 Топ-3 погані діалоги для розбору
+    bad = sorted([a for a in analyzed if a.get("dialog_quality") == "bad"],
+                 key=lambda a: a.get("overall_score") or 10)[:3]
+    if bad:
+        lines.append(f"\n💔 <b>ДЛЯ РОЗБОРУ</b> ({len(bad)})")
+        for a in bad:
+            client = a.get("client_username") or a.get("client_name") or "—"
+            lines.append(f"• <b>{a['manager_name']}</b> → @{client} — {a.get('overall_score', '?')}/10")
+            if a.get("quality_reason"):
+                lines.append(f"  ⚠️ {a['quality_reason'][:200]}")
+
     # Окремо: чати де менеджер не відповів жодного слова
     ignored = [a for a in skipped if (a.get("messages_from_manager") or 0) == 0]
     if ignored:
