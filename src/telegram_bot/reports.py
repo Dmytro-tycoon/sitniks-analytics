@@ -25,7 +25,7 @@ def _format_client(rec: dict) -> str:
         display = "—"
 
     if chat_id:
-        link = f'https://web.sitniks.com/{SITNIKS_COMPANY_ID}/chats?chatId={chat_id}'
+        link = f'https://web.sitniks.com/{SITNIKS_COMPANY_ID}/chats/dialog/{chat_id}'
         return f'<a href="{link}">{display}</a>'
     return display
 
