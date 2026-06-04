@@ -2,6 +2,32 @@ from collections import defaultdict
 from typing import List, Dict
 
 MEDALS = ["🥇", "🥈", "🥉", "4."]
+SITNIKS_COMPANY_ID = "2341"
+
+
+def _format_client(rec: dict) -> str:
+    """
+    Повертає рядок з даними клієнта для пошуку в Sitniks:
+    "Tetiana Rybalka (@tetiana_rybalka) [відкрити]"
+    Якщо нема імені — лише нік. Прямий лінк відкриває чат у Sitniks.
+    """
+    name = (rec.get("client_name") or "").strip()
+    nick = (rec.get("client_username") or "").strip()
+    chat_id = rec.get("dialog_id")
+
+    if name and nick:
+        display = f"{name} (@{nick})"
+    elif name:
+        display = name
+    elif nick:
+        display = f"@{nick}"
+    else:
+        display = "—"
+
+    if chat_id:
+        link = f'https://web.sitniks.com/{SITNIKS_COMPANY_ID}/chats?chatId={chat_id}'
+        return f'<a href="{link}">{display}</a>'
+    return display
 
 
 def _group_by_manager(analyses: List[Dict]) -> Dict[str, List[Dict]]:
@@ -112,8 +138,7 @@ def format_daily_report(analyses: List[Dict], orders_by_manager: Dict[str, int] 
     if good:
         lines.append(f"\n🏆 <b>ХОРОШІ ПРИКЛАДИ</b> ({len(good)})")
         for a in good:
-            client = a.get("client_username") or a.get("client_name") or "—"
-            lines.append(f"• <b>{a['manager_name']}</b> → @{client} — {a.get('overall_score', '?')}/10")
+            lines.append(f"• <b>{a['manager_name']}</b> → {_format_client(a)} — {a.get('overall_score', '?')}/10")
             if a.get("quality_reason"):
                 lines.append(f"  ✅ {a['quality_reason'][:200]}")
 
@@ -123,8 +148,7 @@ def format_daily_report(analyses: List[Dict], orders_by_manager: Dict[str, int] 
     if bad:
         lines.append(f"\n💔 <b>ДЛЯ РОЗБОРУ</b> ({len(bad)})")
         for a in bad:
-            client = a.get("client_username") or a.get("client_name") or "—"
-            lines.append(f"• <b>{a['manager_name']}</b> → @{client} — {a.get('overall_score', '?')}/10")
+            lines.append(f"• <b>{a['manager_name']}</b> → {_format_client(a)} — {a.get('overall_score', '?')}/10")
             if a.get("quality_reason"):
                 lines.append(f"  ⚠️ {a['quality_reason'][:200]}")
 
@@ -139,8 +163,7 @@ def format_daily_report(analyses: List[Dict], orders_by_manager: Dict[str, int] 
         for manager, items in sorted(by_assigned.items(), key=lambda kv: -len(kv[1])):
             lines.append(f"• <b>{manager}</b> — {len(items)} чат(ів)")
             for i in items[:5]:
-                client = i.get("client_username") or i.get("client_name") or "—"
-                lines.append(f"   ↳ @{client} (msg клієнта: {i.get('messages_count', 0)})")
+                lines.append(f"   ↳ {_format_client(i)} (msg клієнта: {i.get('messages_count', 0)})")
 
     return "\n".join(lines)
 
@@ -190,8 +213,7 @@ def format_manager_report(manager_name: str, analyses: List[Dict], rank: int = N
     # Топ-діалог
     if best_dialog.get("summary"):
         lines.append("🏆 <b>ТВІЙ НАЙКРАЩИЙ ДІАЛОГ</b>")
-        client = best_dialog.get("client_username") or best_dialog.get("client_name") or "клієнт"
-        lines.append(f"@{client} — {best_dialog['overall_score']}/10")
+        lines.append(f"{_format_client(best_dialog)} — {best_dialog['overall_score']}/10")
         lines.append(f"<i>{best_dialog['summary']}</i>")
 
     return "\n".join(lines)
