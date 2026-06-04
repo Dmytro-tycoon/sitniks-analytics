@@ -1,3 +1,4 @@
+import asyncio
 import httpx
 from typing import List, Dict, Optional
 from datetime import datetime
@@ -12,6 +13,21 @@ class SitniksClient:
             "Content-Type": "application/json"
         }
         self.client = httpx.AsyncClient(timeout=30.0)
+
+    async def _get_with_retry(self, url: str, params: dict = None) -> dict:
+        """GET з retry на 429 (експоненційний backoff)."""
+        backoff = 2
+        for attempt in range(6):
+            response = await self.client.get(url, headers=self.headers, params=params)
+            if response.status_code == 429:
+                if attempt == 5:
+                    response.raise_for_status()
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 30)
+                continue
+            response.raise_for_status()
+            return response.json()
+        return {}
 
     async def get_chats(
         self,
@@ -35,13 +51,7 @@ class SitniksClient:
             }
         params["limit"] = limit
         params["skip"] = skip
-        response = await self.client.get(
-            f"{self.base_url}/chats",
-            headers=self.headers,
-            params=params,
-        )
-        response.raise_for_status()
-        return response.json()
+        return await self._get_with_retry(f"{self.base_url}/chats", params=params)
 
     async def get_all_chats(self, date_from: datetime, date_to: datetime, by_first_message: bool = False) -> List[Dict]:
         """Отримати всі чати за період з пагінацією."""
@@ -58,20 +68,11 @@ class SitniksClient:
         return all_chats
 
     async def get_chat_messages(self, chat_id: str) -> List[Dict]:
-        response = await self.client.get(
-            f"{self.base_url}/chats/{chat_id}/messages",
-            headers=self.headers
-        )
-        response.raise_for_status()
-        return response.json().get("data", [])
+        data = await self._get_with_retry(f"{self.base_url}/chats/{chat_id}/messages")
+        return data.get("data", [])
 
     async def get_chat(self, chat_id: str) -> Dict:
-        response = await self.client.get(
-            f"{self.base_url}/chats/{chat_id}",
-            headers=self.headers
-        )
-        response.raise_for_status()
-        return response.json()
+        return await self._get_with_retry(f"{self.base_url}/chats/{chat_id}")
 
     async def get_orders(self, date_from: datetime, date_to: datetime) -> List[Dict]:
         """Тягнемо всі замовлення за період (через пагінацію)."""
@@ -85,13 +86,7 @@ class SitniksClient:
                 "limit": limit,
                 "skip": skip,
             }
-            response = await self.client.get(
-                f"{self.base_url}/orders",
-                headers=self.headers,
-                params=params,
-            )
-            response.raise_for_status()
-            data = response.json()
+            data = await self._get_with_retry(f"{self.base_url}/orders", params=params)
             orders = data.get("data", [])
             all_orders.extend(orders)
             if len(all_orders) >= data.get("count", 0) or not orders:

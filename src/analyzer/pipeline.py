@@ -66,31 +66,31 @@ async def analyze_period(date_from: datetime, date_to: datetime, max_chats: int 
     existing_with_order_ids = {o["chatId"] for o in orders if o.get("chatId") and o["chatId"] not in new_chat_ids}
     print(f"Замовлень {len(orders)}, з них з ДІЮЧИХ чатів: {len(existing_with_order_ids)}")
 
-    # 3. Тягнемо деталі діючих чатів з замовленням
+    # 3. Тягнемо деталі діючих чатів з замовленням (послідовно щоб не впертися в rate limit)
     existing_chats = []
-    sem = asyncio.Semaphore(10)
-    async def fetch_chat(cid):
-        async with sem:
-            try:
-                return await sitniks.get_chat(cid)
-            except Exception as e:
-                print(f"❌ chat {cid}: {e}")
-                return None
-    existing_chats_raw = await asyncio.gather(*[fetch_chat(cid) for cid in existing_with_order_ids])
-    existing_chats = [c for c in existing_chats_raw if c]
+    for cid in existing_with_order_ids:
+        try:
+            c = await sitniks.get_chat(cid)
+            if c:
+                existing_chats.append(c)
+            await asyncio.sleep(0.2)
+        except Exception as e:
+            print(f"❌ chat {cid}: {e}")
 
     chats = new_chats + existing_chats
     if max_chats:
         chats = chats[:max_chats]
     print(f"Усього на аналіз: {len(chats)} (нові: {len(new_chats)} + діючі з замовленням: {len(existing_chats)})")
 
-    # Паралельно тягнемо повідомлення для всіх чатів
-    sem = asyncio.Semaphore(10)
+    # Послідовно тягнемо повідомлення з затримкою — Sitniks rate-limit'ить агресивно
+    sem = asyncio.Semaphore(2)
 
     async def load(chat):
         async with sem:
             try:
-                return chat, await sitniks.get_chat_messages(chat["id"])
+                msgs = await sitniks.get_chat_messages(chat["id"])
+                await asyncio.sleep(0.15)
+                return chat, msgs
             except Exception as e:
                 print(f"❌ {chat['id']}: {e}")
                 return chat, None
