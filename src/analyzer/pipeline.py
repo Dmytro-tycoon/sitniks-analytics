@@ -3,7 +3,7 @@ from typing import List, Dict
 from datetime import datetime
 
 from src.sitniks.client import SitniksClient
-from src.sitniks.parser import format_dialog_for_claude
+from src.sitniks.parser import format_dialog_for_claude, to_kiev_str
 from src.claude.batch import ClaudeBatchAnalyzer
 from src.analyzer.metrics import calculate_metrics
 from src.analyzer.filter import should_analyze
@@ -121,7 +121,7 @@ async def analyze_period(date_from: datetime, date_to: datetime, max_chats: int 
             "custom_id": chat["id"],
             "manager_name": chat.get("assignedManagerName", "Невідомо"),
             "chat_status": chat.get("status", ""),
-            "started_at": chat.get("createdAt", ""),
+            "started_at": to_kiev_str(chat.get("createdAt", "")) + " (Київ)",
             "dialog_text": format_dialog_for_claude(messages),
         })
 
