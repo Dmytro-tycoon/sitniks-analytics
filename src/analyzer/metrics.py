@@ -3,8 +3,8 @@ from typing import List, Dict
 import pytz
 
 KIEV = pytz.timezone("Europe/Kiev")
-WORK_START_HOUR = 9
-WORK_END_HOUR = 22  # включно по 21:59
+WORK_START_HOUR = 8
+WORK_END_HOUR = 23  # включно по 22:59
 
 
 def _parse(ts: str) -> datetime:
