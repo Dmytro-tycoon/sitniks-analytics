@@ -115,16 +115,33 @@ class SitniksClient:
         return all_orders
 
     async def get_ad_info_for_chat(self, chat_id: str) -> Optional[dict]:
-        """Повертає adInfo з першого повідомлення чату (або None якщо нема)."""
+        """Повертає adInfo з першого повідомлення чату (або None якщо нема).
+        API повертає повідомлення від найновіших до найстаріших — щоб знайти
+        перше (рекламне) повідомлення, перебираємо сторінки доки не дійдемо
+        до самого раннього, або зупиняємось якщо adInfo знайдено раніше."""
         try:
-            data = await self._get_with_retry(
-                f"{self.base_url}/chats/{chat_id}/messages",
-                params={"limit": 5, "skip": 0},
-            )
-            for msg in data.get("data", []):
-                ad = msg.get("adInfo")
-                if ad and ad.get("adTitle"):
-                    return ad
+            skip = 0
+            limit = 50
+            last_ad = None
+            while True:
+                data = await self._get_with_retry(
+                    f"{self.base_url}/chats/{chat_id}/messages",
+                    params={"limit": limit, "skip": skip},
+                )
+                msgs = data.get("data", [])
+                if not msgs:
+                    break
+                # Перевіряємо кожне повідомлення на adInfo
+                for msg in msgs:
+                    ad = msg.get("adInfo")
+                    if ad and ad.get("adTitle"):
+                        last_ad = ad  # зберігаємо — найстаріший adInfo буде останнім знайденим
+                if len(msgs) < limit:
+                    break  # остання сторінка
+                skip += limit
+                if skip >= 1000:
+                    break
+            return last_ad
         except Exception:
             pass
         return None

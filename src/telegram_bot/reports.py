@@ -137,8 +137,13 @@ def format_daily_report(analyses: List[Dict], orders_by_manager: Dict[str, int] 
                   key=lambda a: a.get("overall_score") or 0, reverse=True)[:3]
     # Хороші/погані виносимо як окремі повідомлення з кнопками — не в загальний текст
 
-    # Окремо: чати де менеджер не відповів жодного слова
-    ignored = [a for a in skipped if (a.get("messages_from_manager") or 0) == 0]
+    # Окремо: чати де КЛІЄНТ ПИСАВ, але менеджер не відповів жодного слова
+    # (виключаємо порожні чати без клієнтських повідомлень)
+    ignored = [
+        a for a in skipped
+        if (a.get("messages_from_manager") or 0) == 0
+        and (a.get("messages_count") or 0) > 0
+    ]
     if ignored:
         lines.append(f"\n🔇 <b>МЕНЕДЖЕР НЕ ВІДПОВІВ</b> ({len(ignored)})")
         # Групуємо за менеджером якому призначено чат
