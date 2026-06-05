@@ -24,6 +24,7 @@ def build_record(chat: Dict, messages: List[Dict], metrics: Dict, qualitative: D
 
         "messages_count": metrics["messages_count"],
         "messages_from_manager": metrics["messages_from_manager"],
+        "client_msgs_in_work_hours": metrics.get("client_msgs_in_work_hours", 0),
         "avg_response_minutes": metrics["response_times"]["avg"],
         "max_response_minutes": metrics["response_times"]["max"],
         "first_response_minutes": metrics["response_times"]["first"],
