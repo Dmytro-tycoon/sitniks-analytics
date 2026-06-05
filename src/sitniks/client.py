@@ -114,5 +114,20 @@ class SitniksClient:
             skip += limit
         return all_orders
 
+    async def get_ad_info_for_chat(self, chat_id: str) -> Optional[dict]:
+        """Повертає adInfo з першого повідомлення чату (або None якщо нема)."""
+        try:
+            data = await self._get_with_retry(
+                f"{self.base_url}/chats/{chat_id}/messages",
+                params={"limit": 5, "skip": 0},
+            )
+            for msg in data.get("data", []):
+                ad = msg.get("adInfo")
+                if ad and ad.get("adTitle"):
+                    return ad
+        except Exception:
+            pass
+        return None
+
     async def close(self):
         await self.client.aclose()

@@ -1,90 +1,87 @@
 [
   {
-    "id": "6a19459ea96a9df8bd07510c",
-    "assignedManagerName": "Віка Палатай2",
+    "id": "6a22cc8ee056c3833dba0c2e",
+    "assignedManagerName": "Діана Кириченко 2",
     "initialSource": "instagram",
     "ownerId": "5873099069479273",
     "ownerName": "skin.one.ua",
     "status": "Новый",
-    "tags": [],
-    "userId": "1609166156824502",
-    "userName": "Христина",
-    "userNickName": "khrystyna05",
-    "lastMessageCreatedAt": "2026-05-29T07:53:43.455Z",
-    "createdAt": "2026-05-29T07:51:58.492Z",
-    "updatedAt": "2026-05-29T07:53:43.808Z",
+    "tags": [
+      "120253775599570059"
+    ],
+    "userId": "1361346066050066",
+    "userName": "Оксана Сенюра",
+    "userNickName": "seniuraoksana",
+    "lastMessageCreatedAt": "2026-06-05T13:19:12.872Z",
+    "createdAt": "2026-06-05T13:18:06.940Z",
+    "updatedAt": "2026-06-05T13:19:13.061Z",
     "messages": [
       {
-        "id": "6a1946094050bf64ad2952e3",
-        "attachmentUrl": "https://cdn.sitniks.com/cmp-2341/chat-templates/2026-05-05/25a7210/10ef9d3-1777990247372.jpeg",
-        "managerName": "Віка Палатай2",
-        "attachments": [],
-        "messageType": "image",
-        "sentBy": "5873099069479273",
-        "text": "",
-        "isViewedByUser": false,
-        "createdAt": "2026-05-29T07:53:45.505Z",
-        "updatedAt": "2026-05-29T07:53:45.505Z"
-      },
-      {
-        "id": "6a194607e056c3833df1884b",
-        "attachmentUrl": "",
-        "managerName": "Віка Палатай2",
-        "attachments": [],
-        "messageType": "text",
-        "sentBy": "5873099069479273",
-        "text": "Відновлюючий та захисний тонер з Віт К Bio Intensive Barrier K Mist\n\nТонер з вітаміном К USOLAB Bio Intensive Barrier K Mist – захисний, відновлювальний та омолоджувальний тонер. Покращує бар’єрну функцію, запобігає трансепідермальній втраті вологи, усуває подразнення та почервоніння. Пригнічує запалення, зменшує реактивність шкіри та створює відчуття комфорту. Підходить для догляду за шкірою з дерматологічними розладами, зокрема дерматитами, акне та розацеа.\nОсобливості:\nПоліпшення кольору обличчя\nЗміцнення шкіри\nАнтивіковий ефект\nЗволоження та заспокоєння\n\n🧴Розпив: 50 мл - 415 грн\nОригінал пакування 150 мл - 1375 грн",
-        "isViewedByUser": false,
-        "createdAt": "2026-05-29T07:53:43.455Z",
-        "updatedAt": "2026-05-29T07:53:43.455Z"
-      },
-      {
-        "id": "6a1945f334f6c3f20ce0209f",
-        "attachmentUrl": "https://cdn.sitniks.com/cmp-2341/chat-templates/2025-10-11/d10b315/be5d55-1760163375319.jpeg",
-        "managerName": "Віка Палатай2",
-        "attachments": [],
-        "messageType": "image",
-        "sentBy": "5873099069479273",
-        "text": "",
-        "isViewedByUser": false,
-        "createdAt": "2026-05-29T07:53:23.721Z",
-        "updatedAt": "2026-05-29T07:53:23.721Z"
-      },
-      {
-        "id": "6a1945f14c999c81dec6cc57",
-        "attachmentUrl": "",
-        "managerName": "Віка Палатай2",
-        "attachments": [],
-        "messageType": "text",
-        "sentBy": "5873099069479273",
-        "text": "Крем з вітаміном К USOLAB Bio Intensive К Cream\n\nДогляд за шкірою з судинними патологіями та для реабілітації шкіри з пошкодженнями.\nОсновна дія:\n▪️Зміцнює стінки судин та капілярів\n▪️Знімає запалення та почервоніння\n▪️Пришвидшує відновлення шкіри після травм, усуває гематоми, синці та набряки\n▪️Відновлює бар’єрні та захисні властивості шкіри Сповільнює ферментативне руйнування волокон дерми\n▪️Має виражені омолоджуючі властивості\n▪️Може окремо використовуватися як крем від темних кіл під очима\n\n🧴Розпив:\n10 мл - 353 грн\n20 мл - 695 грн\n\nОригінальне пакування: \n15 мл - 725 грн\n50 мл - 1765 грн",
-        "isViewedByUser": false,
-        "createdAt": "2026-05-29T07:53:21.793Z",
-        "updatedAt": "2026-05-29T07:53:21.793Z"
-      },
-      {
-        "id": "6a1945bb4050bf64ad28d393",
-        "attachmentUrl": "",
-        "managerName": "Віка Палатай2",
-        "attachments": [],
-        "messageType": "text",
-        "sentBy": "5873099069479273",
-        "text": "Вітаю, з вами на зв’язку косметолог Анастасія😊",
-        "isViewedByUser": false,
-        "createdAt": "2026-05-29T07:52:27.444Z",
-        "updatedAt": "2026-05-29T07:52:27.444Z"
-      },
-      {
-        "id": "6a19459ea96a9df8bd075141",
+        "id": "6a22cc8fe056c3833dba0c63",
         "attachmentUrl": "",
         "storyLink": "",
         "attachments": [],
         "messageType": "text",
-        "sentBy": "1609166156824502",
-        "text": "Добий день \nХочу підібрати догляд \nХочу спробувати CU SKIN і USOLAB\nМені 42 шкіра комбінована но на щоках є трохи роза цея і капіляри де не де видно\nТут трохи написала на що звернула увагу:\n\nКрем не знаю який краще обрати USOLAB Bio Intensive K Cream чи CU SKIN Vitamin U Cream\n\nТонік - USOLAB Bio Intensive Barrier K Mist\n\nУмивалка - CU SKIN Clean-Up Hydro Foam Cleanser\n\nСиворотка - USOLAB Bio Premium K Ampoule\n\nІ хочу CU SKIN CC і BB  \nМожливо щось порадити \nЯ би хотіла все купити пробники або не великі тари (не розпив) \nНапишіть ціни на ці позиції",
+        "sentBy": "1361346066050066",
+        "text": "Вітання! Вартість, скільки мл?",
         "isViewedByUser": true,
-        "createdAt": "2026-05-29T07:51:58.577Z",
-        "updatedAt": "2026-05-29T07:52:14.927Z"
+        "adInfo": {
+          "adId": "120253775599570059",
+          "adTitle": "Face Cream HUBISLAB  29.04.2026  (широка 23.03)",
+          "videoUrl": "https://scontent.cdninstagram.com/v/t51.82787-15/670787241_17987285498976383_6699930748498427976_n.jpg?stp=dst-jpg_e35_tt6&_nc_cat=105&ccb=7-5&_nc_sid=18de74&efg=eyJlZmdfdGFnIjoiQ0xJUFMuYmVzdF9pbWFnZV91cmxnZW4uQzMifQ%3D%3D&_nc_ohc=YZnH9e0EYeMQ7kNvwGqszFl&_nc_oc=Adr69zzeFHCqkSR0yq5zTYiBF1NjbSEvdEtyyjm6l7DftaGu8gp_yfsnhHbmcUlUY5k&_nc_ad=z-m&_nc_cid=0&_nc_zt=23&_nc_ht=scontent.cdninstagram.com&_nc_gid=6YieEhuwfH9ioggFzDHGug&_nc_ss=7a22e&oh=00_Af0XqOWFV_22_dVoWKnRD0m0eMWeWGzN4j3kss1MT9QIzQ&oe=69F78586",
+          "source": "ADS",
+          "type": "OPEN_THREAD"
+        },
+        "createdAt": "2026-06-05T13:18:07.045Z",
+        "updatedAt": "2026-06-05T13:19:01.054Z"
+      },
+      {
+        "id": "6a22ccc9ebe65d55ef50c30b",
+        "attachmentUrl": "",
+        "managerName": "Діана Кириченко 2",
+        "attachments": [],
+        "messageType": "text",
+        "sentBy": "5873099069479273",
+        "text": "Вітаю, з вами на зв’язку косметолог Анастасія😊",
+        "isViewedByUser": true,
+        "createdAt": "2026-06-05T13:19:05.041Z",
+        "updatedAt": "2026-06-05T13:19:10.000Z"
+      },
+      {
+        "id": "6a22cccc34f6c3f20ca54230",
+        "attachmentUrl": "",
+        "managerName": "Діана Кириченко 2",
+        "attachments": [],
+        "messageType": "text",
+        "sentBy": "5873099069479273",
+        "text": "Омолоджуючий крем для обличчя та області навколо очей з ботокс-ефектом Premium Active Eternal Eye & Face Cream HUBISLAB \n\nУнікальна формула крему з інноваційним ботокс-ефектом миттєво повертає шкірі пружність і тонус, разом з тим запобігаючи появі зморшок та уповільнює процеси старіння.\n\n💥Активні компоненти:\n\n•ПЕПТИДНИЙ КОМПЛЕКС\n👉🏻Стимулюють синтез колагену\n👉🏻Працюють на пружність\n👉🏻Дають “ботуло-подібний” ефект (зменшення мімічних зморшок)\n\n•3-O-Ethyl Ascorbic Acid\nСтабільна форма вітаміну С\n👉🏻освітлює тон\n👉🏻працює з пігментацією\n👉🏻додає сяяння\n👉🏻антиоксидантний захист\n\n•Живильна база: Squalane, Beeswax, Dimethicone\n👉🏻Дає комфорт\n👉🏻Захищає від зневоднення\n👉🏻Робить шкіру більш гладкою\n\n🎯 Кому ідеально підійде\n\n✅ 30+ / 40+\n\n✅ Суха, нормальна, комбінована (схильна до сухості)\n\n✅ Тьмяна шкіра з нерівним тоном\n\nРозпив:\n5 мл - 255 грн\n10 мл - 505 грн\n20 мл - 1010 грн\n\nОригінальне пакування:\n40 мл - 2660 грн",
+        "isViewedByUser": true,
+        "createdAt": "2026-06-05T13:19:08.078Z",
+        "updatedAt": "2026-06-05T13:19:10.000Z"
+      },
+      {
+        "id": "6a22ccce4c999c81de8f0eba",
+        "attachmentUrl": "https://cdn.sitniks.com/cmp-2341/chat-templates/2026-02-16/9ddb82/719a110-1771272582932.jpeg",
+        "managerName": "Діана Кириченко 2",
+        "attachments": [],
+        "messageType": "image",
+        "sentBy": "5873099069479273",
+        "text": "",
+        "isViewedByUser": true,
+        "createdAt": "2026-06-05T13:19:10.465Z",
+        "updatedAt": "2026-06-05T13:19:10.779Z"
+      },
+      {
+        "id": "6a22ccd034f6c3f20ca54ae4",
+        "attachmentUrl": "",
+        "managerName": "Діана Кириченко 2",
+        "attachments": [],
+        "messageType": "text",
+        "sentBy": "5873099069479273",
+        "text": "Бажаєте спробувати?)",
+        "isViewedByUser": false,
+        "createdAt": "2026-06-05T13:19:12.872Z",
+        "updatedAt": "2026-06-05T13:19:12.872Z"
       }
     ]
   }
