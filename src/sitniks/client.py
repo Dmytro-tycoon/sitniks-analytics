@@ -68,8 +68,28 @@ class SitniksClient:
         return all_chats
 
     async def get_chat_messages(self, chat_id: str) -> List[Dict]:
-        data = await self._get_with_retry(f"{self.base_url}/chats/{chat_id}/messages")
-        return data.get("data", [])
+        """Усі повідомлення чату через пагінацію (API віддає 10 за замовченням,
+        50 максимум, без поля count — циклимо доки порожньо). Сортуємо за часом."""
+        all_msgs = []
+        skip = 0
+        limit = 50
+        while True:
+            data = await self._get_with_retry(
+                f"{self.base_url}/chats/{chat_id}/messages",
+                params={"limit": limit, "skip": skip},
+            )
+            page = data.get("data", [])
+            if not page:
+                break
+            all_msgs.extend(page)
+            if len(page) < limit:
+                break
+            skip += limit
+            if skip >= 1000:  # safety, на випадок «нескінченних» чатів
+                break
+        # Сортуємо за часом (від раннього до пізнього)
+        all_msgs.sort(key=lambda m: m.get("createdAt", ""))
+        return all_msgs
 
     async def get_chat(self, chat_id: str) -> Dict:
         return await self._get_with_retry(f"{self.base_url}/chats/{chat_id}")
