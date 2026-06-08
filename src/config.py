@@ -32,6 +32,12 @@ class Settings:
     def ANALYSIS_TIMEZONE(self): return os.getenv("ANALYSIS_TIMEZONE", "Europe/Kiev")
     @property
     def DAILY_REPORT_TIME(self): return os.getenv("DAILY_REPORT_TIME", "09:00")
+    @property
+    def ADS_BOT_TOKEN(self): return os.getenv("ADS_BOT_TOKEN", "")
+    @property
+    def ADS_REPORT_CHAT_ID(self):
+        v = os.getenv("ADS_REPORT_CHAT_ID", "")
+        return int(v) if v else None
 
 
 settings = Settings()

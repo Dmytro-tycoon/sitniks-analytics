@@ -5,6 +5,7 @@ import pytz
 
 from src.analyzer.pipeline import analyze_period
 from src.telegram_bot.bot import send_daily_reports
+from src.telegram_bot.ads_bot import send_daily_ads_report
 
 KIEV_TZ = pytz.timezone("Europe/Kiev")
 
@@ -30,6 +31,12 @@ def setup_scheduler() -> AsyncIOScheduler:
         daily_analysis_job,
         CronTrigger(hour=6, minute=0, timezone=KIEV_TZ),
         id="daily_analysis",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        send_daily_ads_report,
+        CronTrigger(hour=6, minute=0, timezone=KIEV_TZ),
+        id="daily_ads_report",
         replace_existing=True,
     )
     return scheduler

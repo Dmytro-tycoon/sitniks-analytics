@@ -1,0 +1,126 @@
+"""
+Окремий Telegram-бот для звіту по рекламних постах.
+Команди:
+  /ads          — звіт за вчора
+  /ads YYYY-MM-DD — звіт за конкретну дату
+  /ads_today    — звіт за сьогодні (наживо)
+  /whoami       — chat_id
+"""
+from datetime import datetime, timedelta
+import pytz
+
+from aiogram import Bot, Dispatcher, F
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
+from aiogram.filters import Command, CommandObject
+from aiogram.types import Message
+
+from src.config import settings
+from src.analyzer.ad_analytics import build_ad_report, format_ad_report
+
+KIEV_TZ = pytz.timezone("Europe/Kiev")
+
+ads_bot = Bot(
+    token=settings.ADS_BOT_TOKEN,
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+)
+ads_dp = Dispatcher()
+
+
+def _parse_date(arg: str) -> datetime:
+    """YYYY-MM-DD → datetime у KIEV_TZ опівночі."""
+    d = datetime.strptime(arg.strip(), "%Y-%m-%d")
+    return KIEV_TZ.localize(d.replace(hour=0, minute=0, second=0, microsecond=0))
+
+
+async def _send_report(message: Message, date_from: datetime, date_to: datetime, label: str):
+    await message.answer(f"⏳ Збираю дані за {label}...")
+    try:
+        report = await build_ad_report(date_from, date_to)
+        text = format_ad_report(report)
+        # Telegram message limit ~4096 chars
+        for chunk in _chunks(text, 4000):
+            await message.answer(chunk, disable_web_page_preview=True)
+    except Exception as e:
+        await message.answer(f"❌ Помилка: {e}")
+
+
+def _chunks(text: str, size: int):
+    lines = text.split("\n")
+    buf = []
+    cur = 0
+    for ln in lines:
+        if cur + len(ln) + 1 > size and buf:
+            yield "\n".join(buf)
+            buf, cur = [], 0
+        buf.append(ln)
+        cur += len(ln) + 1
+    if buf:
+        yield "\n".join(buf)
+
+
+@ads_dp.message(Command("start"))
+async def cmd_start(message: Message):
+    await message.answer(
+        "👋 Це бот аналітики рекламних постів.\n\n"
+        "<b>Команди:</b>\n"
+        "• /ads — звіт за вчора\n"
+        "• /ads YYYY-MM-DD — звіт за конкретну дату\n"
+        "• /ads_today — звіт за сьогодні\n"
+        "• /whoami — твій chat_id"
+    )
+
+
+@ads_dp.message(Command("whoami"))
+async def cmd_whoami(message: Message):
+    await message.answer(
+        f"chat_id: <code>{message.chat.id}</code>\n"
+        f"type: {message.chat.type}\n"
+        f"title: {message.chat.title or message.chat.full_name or '—'}"
+    )
+
+
+@ads_dp.message(Command("ads"))
+async def cmd_ads(message: Message, command: CommandObject):
+    if command.args:
+        try:
+            date_from = _parse_date(command.args)
+        except ValueError:
+            await message.answer("❌ Формат дати: /ads 2026-06-04")
+            return
+        label = date_from.strftime("%d.%m.%Y")
+    else:
+        now = datetime.now(KIEV_TZ)
+        date_from = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        label = f"вчора ({date_from.strftime('%d.%m.%Y')})"
+
+    date_to = date_from + timedelta(days=1)
+    await _send_report(message, date_from, date_to, label)
+
+
+@ads_dp.message(Command("ads_today"))
+async def cmd_ads_today(message: Message):
+    now = datetime.now(KIEV_TZ)
+    date_from = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    await _send_report(message, date_from, now, f"сьогодні ({date_from.strftime('%d.%m.%Y')}, наживо)")
+
+
+async def send_daily_ads_report():
+    """Виклик з cron: тиха розсилка за вчора у ADS_REPORT_CHAT_ID."""
+    chat_id = settings.ADS_REPORT_CHAT_ID
+    if not chat_id:
+        print("⚠️ ADS_REPORT_CHAT_ID не задано — пропускаю розсилку")
+        return
+
+    now = datetime.now(KIEV_TZ)
+    date_from = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    date_to = date_from + timedelta(days=1)
+
+    try:
+        report = await build_ad_report(date_from, date_to)
+        text = format_ad_report(report)
+        for chunk in _chunks(text, 4000):
+            await ads_bot.send_message(chat_id, chunk, disable_web_page_preview=True)
+        print(f"[ads_bot] daily report sent → {chat_id}")
+    except Exception as e:
+        print(f"[ads_bot] daily report FAILED: {e}")
