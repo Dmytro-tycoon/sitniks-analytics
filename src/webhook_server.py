@@ -8,8 +8,8 @@ from src.analyzer.spam_filter import is_spam_profile
 from src.config import settings
 
 SPAM_TAG = "🚫 SPAM"
-# Дедуплікація: не реагувати багато разів на той же chat
-_SEEN_CHATS: set[str] = set()
+# Дедуплікація сповіщень про спам — щоб не спамити Telegram при кожному повідомленні
+_NOTIFIED_SPAM_CHATS: set[str] = set()
 
 
 async def handle_webhook(request: web.Request) -> web.Response:
@@ -31,9 +31,6 @@ async def handle_webhook(request: web.Request) -> web.Response:
     if not chat_id:
         return web.json_response({"ok": True, "note": "no chatId"})
 
-    if chat_id in _SEEN_CHATS:
-        return web.json_response({"ok": True, "note": "already processed"})
-
     sc = SitniksClient()
     try:
         chat = await sc.get_chat(chat_id)
@@ -45,25 +42,27 @@ async def handle_webhook(request: web.Request) -> web.Response:
                 new_tags = existing_tags + [SPAM_TAG]
                 try:
                     await sc.update_chat_tags(chat_id, new_tags)
-                    print(f"[webhook] SPAM detected & tagged: {chat.get('userName')} (@{chat.get('userNickName')}) — {reason}", flush=True)
+                    print(f"[webhook] 🚫 SPAM detected & tagged: {chat.get('userName')} (@{chat.get('userNickName')}) — {reason}", flush=True)
                 except Exception as e:
                     print(f"[webhook] tag failed: {e}", flush=True)
+        else:
+            print(f"[webhook] ✓ not spam: {chat.get('userName')} (@{chat.get('userNickName')})", flush=True)
 
-            # Сповіщаємо тебе в Telegram
-            from src.telegram_bot.bot import bot
-            client_link = f'<a href="https://web.sitniks.com/2341/chats/dialog/{chat_id}">{chat.get("userName") or "—"} (@{chat.get("userNickName") or "—"})</a>'
-            try:
-                await bot.send_message(
-                    settings.TELEGRAM_SHADOW_CHAT_ID or settings.TELEGRAM_LEADERSHIP_CHAT_ID,
-                    f"🚫 <b>СПАМ-чат</b>\n{client_link}\nприсвоєно тег <code>{SPAM_TAG}</code>\nпричина: {reason}",
-                    parse_mode="HTML", disable_web_page_preview=True,
-                )
-            except Exception as e:
-                print(f"[webhook] tg notify failed: {e}", flush=True)
-
-        _SEEN_CHATS.add(chat_id)
-        if len(_SEEN_CHATS) > 10000:
-            _SEEN_CHATS.clear()  # простий memory-cap
+            # Сповіщаємо тебе в Telegram — лише один раз на чат
+            if chat_id not in _NOTIFIED_SPAM_CHATS:
+                from src.telegram_bot.bot import bot
+                client_link = f'<a href="https://web.sitniks.com/2341/chats/dialog/{chat_id}">{chat.get("userName") or "—"} (@{chat.get("userNickName") or "—"})</a>'
+                try:
+                    await bot.send_message(
+                        settings.TELEGRAM_SHADOW_CHAT_ID or settings.TELEGRAM_LEADERSHIP_CHAT_ID,
+                        f"🚫 <b>СПАМ-чат</b>\n{client_link}\nприсвоєно тег <code>{SPAM_TAG}</code>\nпричина: {reason}",
+                        parse_mode="HTML", disable_web_page_preview=True,
+                    )
+                    _NOTIFIED_SPAM_CHATS.add(chat_id)
+                    if len(_NOTIFIED_SPAM_CHATS) > 10000:
+                        _NOTIFIED_SPAM_CHATS.clear()
+                except Exception as e:
+                    print(f"[webhook] tg notify failed: {e}", flush=True)
 
     except Exception as e:
         print(f"[webhook] error processing {chat_id}: {e}", flush=True)
