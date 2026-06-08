@@ -174,7 +174,7 @@ async def send_daily_reports(date_str: str = None):
                 disable_web_page_preview=True,
             )
             # Окремі повідомлення з кнопками — для good/bad прикладів
-            for item in select_review_items(analyses):
+            for item in select_review_items(analyses, top_good=2, top_bad=3):
                 await bot.send_message(
                     settings.TELEGRAM_LEADERSHIP_CHAT_ID,
                     format_review_item(item),
