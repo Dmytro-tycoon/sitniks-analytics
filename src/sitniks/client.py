@@ -146,5 +146,15 @@ class SitniksClient:
             pass
         return None
 
+    async def update_chat_tags(self, chat_id: str, tags: List[str]) -> Dict:
+        """PUT /chats/{id} — оновити теги чату (єдине доступне через Open API поле)."""
+        response = await self.client.put(
+            f"{self.base_url}/chats/{chat_id}",
+            headers=self.headers,
+            json={"tags": tags},
+        )
+        response.raise_for_status()
+        return response.json()
+
     async def close(self):
         await self.client.aclose()
