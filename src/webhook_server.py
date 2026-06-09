@@ -27,6 +27,11 @@ async def handle_webhook(request: web.Request) -> web.Response:
         or (payload.get("data") or {}).get("chat", {}).get("id")
     )
     print(f"[webhook] payload keys={list(payload.keys())} chat_id={chat_id}", flush=True)
+    # Повний payload для діагностики false-positives (тимчасово)
+    try:
+        print(f"[webhook] RAW payload: {json.dumps(payload, ensure_ascii=False)[:1500]}", flush=True)
+    except Exception:
+        pass
 
     if not chat_id:
         return web.json_response({"ok": True, "note": "no chatId"})
