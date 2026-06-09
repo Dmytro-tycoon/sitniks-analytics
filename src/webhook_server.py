@@ -52,6 +52,7 @@ async def handle_webhook(request: web.Request) -> web.Response:
             if chat_id not in _NOTIFIED_SPAM_CHATS:
                 from src.telegram_bot.bot import bot
                 client_link = f'<a href="https://web.sitniks.com/2341/chats/dialog/{chat_id}">{chat.get("userName") or "—"} (@{chat.get("userNickName") or "—"})</a>'
+                print(f"[webhook] TELEGRAM SEND about SPAM: {chat.get('userName')} (@{chat.get('userNickName')}) reason={reason}", flush=True)
                 try:
                     await bot.send_message(
                         settings.TELEGRAM_SHADOW_CHAT_ID or settings.TELEGRAM_LEADERSHIP_CHAT_ID,

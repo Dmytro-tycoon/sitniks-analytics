@@ -39,5 +39,23 @@ class Settings:
         v = os.getenv("ADS_REPORT_CHAT_ID", "")
         return int(v) if v else None
 
+    # ── Nova Poshta bot ──────────────────────────────────────────────────────
+    @property
+    def NP_BOT_TOKEN(self): return os.getenv("NP_BOT_TOKEN", "")
+
+    @property
+    def NP_OPERATOR_CHAT_ID(self):
+        v = os.getenv("NP_OPERATOR_CHAT_ID", "")
+        return int(v) if v else 0
+
+    @property
+    def NP_ACCOUNTS(self) -> list:
+        """JSON: [{"name": "skin.one.ua", "key": "..."}, ...]"""
+        raw = os.getenv("NP_ACCOUNTS", "[]")
+        try:
+            return json.loads(raw)
+        except Exception:
+            return []
+
 
 settings = Settings()
