@@ -16,7 +16,7 @@ from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
 
 from src.config import settings
-from src.analyzer.ad_analytics import build_ad_report, format_ad_report
+from src.analyzer.ad_analytics import build_ad_report, format_ad_report, mark_report_as_sent
 
 KIEV_TZ = pytz.timezone("Europe/Kiev")
 
@@ -117,10 +117,14 @@ async def send_daily_ads_report():
     date_to = date_from + timedelta(days=1)
 
     try:
-        report = await build_ad_report(date_from, date_to)
+        report = await build_ad_report(date_from, date_to, exclude_reported=True)
+        if report["total"] == 0:
+            print(f"[ads_bot] no new orders to report (skipped {report['skipped_already_reported']})")
+            return
         text = format_ad_report(report)
         for chunk in _chunks(text, 4000):
             await ads_bot.send_message(chat_id, chunk, disable_web_page_preview=True)
-        print(f"[ads_bot] daily report sent → {chat_id}")
+        marked = mark_report_as_sent(report)
+        print(f"[ads_bot] daily report sent → {chat_id} (marked {marked} orders as reported)")
     except Exception as e:
         print(f"[ads_bot] daily report FAILED: {e}")

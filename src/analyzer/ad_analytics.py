@@ -7,7 +7,7 @@
 import asyncio
 from collections import defaultdict
 from datetime import datetime
-from typing import List, Dict
+from typing import List, Dict, Tuple
 
 from src.sitniks.client import SitniksClient
 
@@ -15,47 +15,76 @@ from src.sitniks.client import SitniksClient
 NO_AD_LABEL = "Без реклами (прямі)"
 
 
-async def get_ad_stats_for_orders(orders: List[Dict], sitniks: SitniksClient) -> Dict[str, int]:
-    """
-    Для списку замовлень повертає словник {ad_title: кількість_замовлень}.
-    Замовлення без chatId або без adInfo → NO_AD_LABEL.
-    """
-    counts: Dict[str, int] = defaultdict(int)
+async def _resolve_ad_titles(orders: List[Dict], sitniks: SitniksClient) -> List[Tuple[Dict, str]]:
+    """Для кожного замовлення повертає (order, ad_title)."""
     sem = asyncio.Semaphore(3)
 
-    async def fetch_one(order: Dict):
+    async def fetch_one(order: Dict) -> Tuple[Dict, str]:
         chat_id = order.get("chatId")
         if not chat_id:
-            return NO_AD_LABEL
+            return order, NO_AD_LABEL
         async with sem:
             ad = await sitniks.get_ad_info_for_chat(chat_id)
             await asyncio.sleep(0.1)
-        return ad["adTitle"].strip() if ad else NO_AD_LABEL
+        return order, (ad["adTitle"].strip() if ad else NO_AD_LABEL)
 
-    titles = await asyncio.gather(*[fetch_one(o) for o in orders])
-    for t in titles:
-        counts[t] += 1
-
-    return dict(counts)
+    return await asyncio.gather(*[fetch_one(o) for o in orders])
 
 
-async def build_ad_report(date_from: datetime, date_to: datetime) -> Dict:
+async def build_ad_report(date_from: datetime, date_to: datetime,
+                          exclude_reported: bool = False) -> Dict:
     """
-    Завантажує замовлення за період і повертає готовий звіт.
-    Повертає: {"date": str, "stats": {ad_title: count}, "total": int}
+    Завантажує замовлення за період і повертає звіт.
+
+    exclude_reported=True → відсіює замовлення, які вже були в попередніх ads-звітах
+    (для cron-job, щоб не дублювати).
+    Повертає: {date, stats, total, orders_resolved, skipped_already_reported}
     """
     sitniks = SitniksClient()
     try:
         orders = await sitniks.get_orders(date_from, date_to)
-        stats = await get_ad_stats_for_orders(orders, sitniks)
+        resolved = await _resolve_ad_titles(orders, sitniks)
     finally:
         await sitniks.close()
 
+    skipped = 0
+    if exclude_reported:
+        from src.database.supabase_client import get_reported_order_ids
+        already = get_reported_order_ids()
+        before = len(resolved)
+        resolved = [(o, t) for (o, t) in resolved if o.get("id") not in already]
+        skipped = before - len(resolved)
+
+    counts: Dict[str, int] = defaultdict(int)
+    for _, title in resolved:
+        counts[title] += 1
+
     return {
         "date": date_from.strftime("%d.%m.%Y"),
-        "stats": stats,
-        "total": sum(stats.values()),
+        "stats": dict(counts),
+        "total": sum(counts.values()),
+        "orders_resolved": resolved,
+        "skipped_already_reported": skipped,
     }
+
+
+def mark_report_as_sent(report: Dict):
+    """Записує всі замовлення зі звіту в reported_ad_orders."""
+    from src.database.supabase_client import mark_orders_reported
+    rows = []
+    for order, title in report.get("orders_resolved", []):
+        oid = order.get("id")
+        if not oid:
+            continue
+        rows.append({
+            "order_id": oid,
+            "ad_title": title,
+            "order_date": (order.get("createdAt") or "")[:10] or None,
+            "chat_id": order.get("chatId"),
+        })
+    if rows:
+        mark_orders_reported(rows)
+    return len(rows)
 
 
 def format_ad_report(report: Dict) -> str:
@@ -74,8 +103,11 @@ def format_ad_report(report: Dict) -> str:
     lines = [
         f"📣 <b>Замовлення по рекламних постах за {date}</b>",
         f"Всього замовлень: <b>{total}</b>",
-        "",
     ]
+    skipped = report.get("skipped_already_reported", 0)
+    if skipped:
+        lines.append(f"<i>(пропущено {skipped} вже надісланих раніше)</i>")
+    lines.append("")
 
     for i, (title, count) in enumerate(sorted_items):
         icon = medals[i] if i < len(medals) else "▪️"

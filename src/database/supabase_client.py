@@ -68,3 +68,18 @@ def save_daily_report(date_str: str, aggregated: dict):
         "aggregated_data": aggregated,
         "sent_to_telegram": True,
     }, on_conflict="report_date").execute()
+
+
+def get_reported_order_ids() -> set:
+    """ID замовлень, що вже потрапляли в попередні ads-звіти."""
+    res = get_client().table("reported_ad_orders").select("order_id").execute()
+    return {row["order_id"] for row in (res.data or [])}
+
+
+def mark_orders_reported(rows: list):
+    """rows: list of dict {order_id, ad_title, order_date, chat_id}"""
+    if not rows:
+        return
+    return get_client().table("reported_ad_orders").upsert(
+        rows, on_conflict="order_id"
+    ).execute()
