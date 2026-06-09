@@ -50,8 +50,6 @@ async def handle_webhook(request: web.Request) -> web.Response:
                     print(f"[webhook] 🚫 SPAM detected & tagged: {chat.get('userName')} (@{chat.get('userNickName')}) — {reason}", flush=True)
                 except Exception as e:
                     print(f"[webhook] tag failed: {e}", flush=True)
-        else:
-            print(f"[webhook] ✓ not spam: {chat.get('userName')} (@{chat.get('userNickName')})", flush=True)
 
             # Сповіщаємо тебе в Telegram — лише один раз на чат
             if chat_id not in _NOTIFIED_SPAM_CHATS:
@@ -69,6 +67,8 @@ async def handle_webhook(request: web.Request) -> web.Response:
                         _NOTIFIED_SPAM_CHATS.clear()
                 except Exception as e:
                     print(f"[webhook] tg notify failed: {e}", flush=True)
+        else:
+            print(f"[webhook] ✓ not spam: {chat.get('userName')} (@{chat.get('userNickName')})", flush=True)
 
     except Exception as e:
         print(f"[webhook] error processing {chat_id}: {e}", flush=True)
