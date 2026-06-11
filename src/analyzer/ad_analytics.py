@@ -23,8 +23,9 @@ async def _resolve_ad_titles(orders: List[Dict], sitniks: SitniksClient) -> List
         chat_id = order.get("chatId")
         if not chat_id:
             return order, NO_AD_LABEL
+        order_created = order.get("createdAt") or ""
         async with sem:
-            ad = await sitniks.get_ad_info_for_chat(chat_id)
+            ad = await sitniks.get_ad_info_for_chat(chat_id, before_iso=order_created)
             await asyncio.sleep(0.1)
         return order, (ad["adTitle"].strip() if ad else NO_AD_LABEL)
 

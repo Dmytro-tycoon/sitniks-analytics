@@ -10,7 +10,7 @@ from typing import Optional
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
@@ -39,8 +39,16 @@ class RegistryFlow(StatesGroup):
     confirming = State()
 
 
+class EditFlow(StatesGroup):
+    choosing_action = State()
+    waiting_phone = State()
+    waiting_name = State()
+    confirming_cod_remove = State()
+
+
 def _only_operator(message: Message) -> bool:
-    return message.chat.id == settings.NP_OPERATOR_CHAT_ID
+    ids = settings.NP_OPERATOR_CHAT_IDS
+    return message.chat.id in ids if ids else True
 
 
 def _account_keyboard() -> InlineKeyboardMarkup:
@@ -77,7 +85,8 @@ async def cmd_start(message: Message):
         return
     await message.answer(
         "📮 <b>Бот Нової Пошти</b>\n\n"
-        "• /registry — створити реєстр з чернеток"
+        "• /registry — створити реєстр з чернеток\n"
+        "• /edit <code>&lt;номер ТТН&gt;</code> — редагувати ТТН (телефон/ПІБ/НП)"
     )
 
 
@@ -196,6 +205,186 @@ async def cb_confirm_registry(callback: CallbackQuery, state: FSMContext):
 
 @np_dp.callback_query(RegistryFlow.confirming, F.data == "np_reg:cancel")
 async def cb_cancel_registry(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await state.clear()
+    await callback.message.answer("Скасовано.")
+    await callback.answer()
+
+
+# ── /edit ─────────────────────────────────────────────────────────────────────
+
+def _edit_keyboard(is_draft: bool) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📱 Змінити телефон", callback_data="np_edit:phone")],
+        [InlineKeyboardButton(text="👤 Змінити ПІБ", callback_data="np_edit:name")],
+        [InlineKeyboardButton(text="💰 Прибрати накладений платіж", callback_data="np_edit:cod")],
+        [InlineKeyboardButton(text="❌ Закрити", callback_data="np_edit:cancel")],
+    ])
+
+
+def _format_doc_info(doc, account_name: str) -> str:
+    raw = getattr(doc, "raw", {})
+    phone = raw.get("RecipientsPhone", "—")
+    addr = raw.get("RecipientAddressDescription", "") or doc.recipient_city or "—"
+    state_name = raw.get("StateName", "—")
+    try:
+        cod_val = float(str(doc.cod or 0))
+    except (ValueError, TypeError):
+        cod_val = 0
+    cod_line = f"{cod_val:.0f} грн" if cod_val > 0 else "немає"
+    tag = "🟢 чернетка (зміни напряму)" if doc.is_draft else "🟠 на складі (зміни через заявку)"
+    return (
+        f"📦 <b>ТТН #{doc.number}</b>\n"
+        f"Кабінет: {account_name}\n"
+        f"Статус: {state_name}\n"
+        f"Тип зміни: {tag}\n\n"
+        f"Отримувач: {doc.recipient_name or '—'}\n"
+        f"Телефон: {phone}\n"
+        f"Адреса: {addr}\n"
+        f"Накладений платіж: {cod_line}\n"
+    )
+
+
+@np_dp.message(Command("edit"))
+async def cmd_edit(message: Message, command: CommandObject, state: FSMContext):
+    if not _only_operator(message):
+        return
+    ttn = (command.args or "").strip()
+    if not ttn or not ttn.isdigit():
+        await message.answer("Формат: <code>/edit 20451459116069</code>")
+        return
+
+    await message.answer(f"⏳ Шукаю ТТН <code>{ttn}</code> в кабінетах…")
+
+    accounts = settings.NP_ACCOUNTS
+    found_doc = None
+    found_idx = -1
+    for i, acc in enumerate(accounts):
+        client = NovaPooshtaClient(acc["key"])
+        try:
+            doc = await client.find_document(ttn)
+            if doc:
+                found_doc = doc
+                found_idx = i
+                break
+        except Exception:
+            pass
+        finally:
+            await client.close()
+
+    if not found_doc:
+        await message.answer("❌ ТТН не знайдено в жодному з кабінетів (за останні 60 днів).")
+        return
+
+    account = accounts[found_idx]
+    await state.set_state(EditFlow.choosing_action)
+    await state.update_data(
+        account_index=found_idx,
+        ttn=ttn,
+        doc_ref=found_doc.ref,
+        doc_raw=found_doc.raw,
+        is_draft=found_doc.is_draft,
+    )
+    await message.answer(
+        _format_doc_info(found_doc, account["name"]),
+        reply_markup=_edit_keyboard(found_doc.is_draft),
+    )
+
+
+@np_dp.callback_query(EditFlow.choosing_action, F.data == "np_edit:cancel")
+async def cb_edit_cancel(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await state.clear()
+    await callback.answer("Закрито")
+
+
+@np_dp.callback_query(EditFlow.choosing_action, F.data == "np_edit:phone")
+async def cb_edit_phone(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await state.set_state(EditFlow.waiting_phone)
+    await callback.message.answer("Введіть новий номер у форматі <code>380XXXXXXXXX</code>:")
+    await callback.answer()
+
+
+@np_dp.callback_query(EditFlow.choosing_action, F.data == "np_edit:name")
+async def cb_edit_name(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await state.set_state(EditFlow.waiting_name)
+    await callback.message.answer("Введіть нове ПІБ (Ім'я Прізвище По-батькові):")
+    await callback.answer()
+
+
+@np_dp.callback_query(EditFlow.choosing_action, F.data == "np_edit:cod")
+async def cb_edit_cod(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await state.set_state(EditFlow.confirming_cod_remove)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✅ Так, прибрати НП", callback_data="np_edit:cod_yes"),
+        InlineKeyboardButton(text="❌ Ні", callback_data="np_edit:cod_no"),
+    ]])
+    await callback.message.answer("Точно прибрати накладений платіж?", reply_markup=kb)
+    await callback.answer()
+
+
+async def _apply_change(message: Message, state: FSMContext, **changes):
+    """Виконує зміну (через update для чернетки або AdditionalService для прийнятої)."""
+    data = await state.get_data()
+    account = settings.NP_ACCOUNTS[data["account_index"]]
+    client = NovaPooshtaClient(account["key"])
+    try:
+        if data["is_draft"]:
+            await client.update_draft(data["doc_raw"], **changes)
+            await message.answer("✅ Зміни збережено (чернетка, безкоштовно).")
+        else:
+            # Для зміни ПІБ NP API вимагає ще й телефон — беремо з ТТН якщо не передано
+            current_phone = (data.get("doc_raw") or {}).get("RecipientsPhone", "")
+            res = await client.request_change_after_accept(
+                data["ttn"], current_phone=current_phone, **changes
+            )
+            ref = ""
+            for item in res.get("data", []):
+                ref = item.get("Ref", "") or ref
+            await message.answer(
+                "✅ Заявку на зміну створено.\n"
+                + (f"№ заявки: <code>{ref}</code>\n" if ref else "")
+                + "Зміни буде внесено до ЕН протягом кількох хвилин."
+            )
+    except Exception as e:
+        await message.answer(f"❌ Помилка: {e}")
+    finally:
+        await client.close()
+    await state.clear()
+
+
+@np_dp.message(EditFlow.waiting_phone)
+async def msg_new_phone(message: Message, state: FSMContext):
+    phone = (message.text or "").strip().replace(" ", "").replace("-", "")
+    if not phone.isdigit() or len(phone) < 10:
+        await message.answer("❌ Невірний формат. Введіть <code>380XXXXXXXXX</code>:")
+        return
+    if not phone.startswith("380"):
+        phone = "380" + phone.lstrip("0")
+    await _apply_change(message, state, new_phone=phone)
+
+
+@np_dp.message(EditFlow.waiting_name)
+async def msg_new_name(message: Message, state: FSMContext):
+    name = (message.text or "").strip()
+    if len(name) < 4 or len(name.split()) < 2:
+        await message.answer("❌ Введіть мінімум Ім'я та Прізвище:")
+        return
+    await _apply_change(message, state, new_name=name)
+
+
+@np_dp.callback_query(EditFlow.confirming_cod_remove, F.data == "np_edit:cod_yes")
+async def cb_cod_yes(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await _apply_change(callback.message, state, remove_cod=True)
+    await callback.answer()
+
+
+@np_dp.callback_query(EditFlow.confirming_cod_remove, F.data == "np_edit:cod_no")
+async def cb_cod_no(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_reply_markup(reply_markup=None)
     await state.clear()
     await callback.message.answer("Скасовано.")

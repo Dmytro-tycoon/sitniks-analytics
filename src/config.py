@@ -49,6 +49,14 @@ class Settings:
         return int(v) if v else 0
 
     @property
+    def NP_OPERATOR_CHAT_IDS(self) -> list:
+        """Список chat_id операторів через кому. Якщо порожній — fallback на NP_OPERATOR_CHAT_ID."""
+        raw = os.getenv("NP_OPERATOR_CHAT_IDS", "")
+        if raw:
+            return [int(x.strip()) for x in raw.split(",") if x.strip()]
+        return [self.NP_OPERATOR_CHAT_ID] if self.NP_OPERATOR_CHAT_ID else []
+
+    @property
     def NP_ACCOUNTS(self) -> list:
         """JSON: [{"name": "skin.one.ua", "key": "..."}, ...]"""
         raw = os.getenv("NP_ACCOUNTS", "[]")

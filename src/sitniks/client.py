@@ -114,37 +114,30 @@ class SitniksClient:
             skip += limit
         return all_orders
 
-    async def get_ad_info_for_chat(self, chat_id: str) -> Optional[dict]:
-        """Повертає adInfo з першого повідомлення чату (або None якщо нема).
-        API повертає повідомлення від найновіших до найстаріших — щоб знайти
-        перше (рекламне) повідомлення, перебираємо сторінки доки не дійдемо
-        до самого раннього, або зупиняємось якщо adInfo знайдено раніше."""
+    async def get_ad_info_for_chat(self, chat_id: str, before_iso: str = None) -> Optional[dict]:
+        """
+        Повертає НАЙСВІЖІШЕ adInfo з чату (з усіх повідомлень).
+
+        Клієнт може повертатися в один і той самий Sitniks-чат кілька разів,
+        реагуючи на різні рекламні пости — кожне таке нове звернення створює
+        нове повідомлення з власним adInfo. До замовлення відносимо рекламу,
+        з якої клієнт прийшов саме перед покупкою.
+
+        before_iso — ISO-дата (createdAt замовлення): шукаємо найсвіжіший adInfo
+        зі створенням <= before_iso. Якщо немає — fallback на будь-яке adInfo.
+        """
         try:
-            skip = 0
-            limit = 50
-            last_ad = None
-            while True:
-                data = await self._get_with_retry(
-                    f"{self.base_url}/chats/{chat_id}/messages",
-                    params={"limit": limit, "skip": skip},
-                )
-                msgs = data.get("data", [])
-                if not msgs:
-                    break
-                # Перевіряємо кожне повідомлення на adInfo
-                for msg in msgs:
-                    ad = msg.get("adInfo")
-                    if ad and ad.get("adTitle"):
-                        last_ad = ad  # зберігаємо — найстаріший adInfo буде останнім знайденим
-                if len(msgs) < limit:
-                    break  # остання сторінка
-                skip += limit
-                if skip >= 1000:
-                    break
-            return last_ad
+            messages = await self.get_chat_messages(chat_id)  # відсортовано ASC
+            ads = [m for m in messages if (m.get("adInfo") or {}).get("adTitle")]
+            if not ads:
+                return None
+            if before_iso:
+                in_window = [m for m in ads if (m.get("createdAt") or "") <= before_iso]
+                if in_window:
+                    return in_window[-1]["adInfo"]
+            return ads[-1]["adInfo"]
         except Exception:
-            pass
-        return None
+            return None
 
     async def update_chat_tags(self, chat_id: str, tags: List[str]) -> Dict:
         """PUT /chats/{id} — оновити теги чату (єдине доступне через Open API поле)."""
