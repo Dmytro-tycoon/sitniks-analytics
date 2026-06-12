@@ -70,7 +70,7 @@ def setup_scheduler() -> AsyncIOScheduler:
     )
     scheduler.add_job(
         daily_hair_stats_job,
-        CronTrigger(hour=7, minute=0, timezone=KIEV_TZ),
+        CronTrigger(hour=5, minute=30, timezone=KIEV_TZ),
         id="daily_hair_stats",
         replace_existing=True,
     )
