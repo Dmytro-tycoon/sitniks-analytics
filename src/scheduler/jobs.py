@@ -35,7 +35,7 @@ def setup_scheduler() -> AsyncIOScheduler:
     )
     scheduler.add_job(
         send_daily_ads_report,
-        CronTrigger(hour=8, minute=0, timezone=KIEV_TZ),
+        CronTrigger(hour=8, minute=30, timezone=KIEV_TZ),
         id="daily_ads_report",
         replace_existing=True,
     )
