@@ -6,6 +6,9 @@ import pytz
 from src.analyzer.pipeline import analyze_period
 from src.telegram_bot.bot import send_daily_reports
 from src.telegram_bot.ads_bot import send_daily_ads_report, reattribute_yesterday
+from src.analyzer.stats_pipeline import run_stats_for_date
+from src.sheets.client import SheetsClient
+from src.config import settings
 
 KIEV_TZ = pytz.timezone("Europe/Kiev")
 
@@ -23,6 +26,26 @@ async def daily_analysis_job():
         print(f"[{datetime.now()}] daily_analysis_job done")
     except Exception as e:
         print(f"[{datetime.now()}] daily_analysis_job FAILED: {e}")
+
+
+async def daily_hair_stats_job():
+    """Щоранку о 07:00: збір статистики skin.one.hair → Google Sheets"""
+    from datetime import date, timedelta
+    yesterday = date.today() - timedelta(days=1)
+    print(f"[{datetime.now()}] daily_hair_stats_job started for {yesterday}")
+    try:
+        sheets = SheetsClient(
+            service_account_file=settings.GOOGLE_SERVICE_ACCOUNT_FILE,
+            spreadsheet_id=settings.HAIR_STATS_SPREADSHEET_ID,
+        )
+        await run_stats_for_date(
+            target_date=yesterday,
+            fb_token=settings.FB_ACCESS_TOKEN,
+            sheets=sheets,
+        )
+        print(f"[{datetime.now()}] daily_hair_stats_job done")
+    except Exception as e:
+        print(f"[{datetime.now()}] daily_hair_stats_job FAILED: {e}")
 
 
 def setup_scheduler() -> AsyncIOScheduler:
@@ -43,6 +66,12 @@ def setup_scheduler() -> AsyncIOScheduler:
         reattribute_yesterday,
         CronTrigger(hour=22, minute=0, timezone=KIEV_TZ),
         id="daily_ads_reattribution",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        daily_hair_stats_job,
+        CronTrigger(hour=7, minute=0, timezone=KIEV_TZ),
+        id="daily_hair_stats",
         replace_existing=True,
     )
     return scheduler

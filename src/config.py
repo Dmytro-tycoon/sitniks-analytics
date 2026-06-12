@@ -66,4 +66,19 @@ class Settings:
             return []
 
 
+    # ── Stats / Google Sheets ────────────────────────────────────────────────
+    @property
+    def FB_ACCESS_TOKEN(self): return os.getenv("FB_ACCESS_TOKEN", "")
+
+    @property
+    def GOOGLE_SERVICE_ACCOUNT_FILE(self):
+        return os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE",
+                         str(_root / "google-service-account.json"))
+
+    @property
+    def HAIR_STATS_SPREADSHEET_ID(self):
+        return os.getenv("HAIR_STATS_SPREADSHEET_ID",
+                         "1WUI5RYPXH9Dghq2L2OthjKug4cJjK1p9e_qcs2ujBpA")
+
+
 settings = Settings()
