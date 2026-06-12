@@ -1,5 +1,9 @@
 """Google Sheets client — читання та запис у таблицю статистики."""
+import base64
+import json
 import logging
+import os
+import tempfile
 from typing import Any, List, Optional
 
 from google.oauth2 import service_account
@@ -43,9 +47,15 @@ LOWER_DATE_ROW = 38
 
 class SheetsClient:
     def __init__(self, service_account_file: str, spreadsheet_id: str):
-        creds = service_account.Credentials.from_service_account_file(
-            service_account_file, scopes=SCOPES
-        )
+        # Підтримка base64-encoded JSON через env змінну GOOGLE_SERVICE_ACCOUNT_B64
+        b64 = os.getenv("GOOGLE_SERVICE_ACCOUNT_B64", "")
+        if b64:
+            info = json.loads(base64.b64decode(b64).decode("utf-8"))
+            creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
+        else:
+            creds = service_account.Credentials.from_service_account_file(
+                service_account_file, scopes=SCOPES
+            )
         self._service = build("sheets", "v4", credentials=creds)
         self.spreadsheet_id = spreadsheet_id
 
