@@ -83,3 +83,24 @@ def mark_orders_reported(rows: list):
     return get_client().table("reported_ad_orders").upsert(
         rows, on_conflict="order_id"
     ).execute()
+
+
+# ── Chat owner cache (для оптимізації запитів до Sitniks) ─────────────────
+def get_cached_chat_owners(chat_ids: list) -> dict:
+    """Повертає {chat_id: owner_name} для тих chat_id що є в кеші."""
+    if not chat_ids:
+        return {}
+    res = get_client().table("chat_owner_cache")\
+        .select("chat_id, owner_name")\
+        .in_("chat_id", chat_ids)\
+        .execute()
+    return {row["chat_id"]: row["owner_name"] for row in (res.data or [])}
+
+
+def cache_chat_owners(rows: list):
+    """rows: list of dict {chat_id, owner_name}"""
+    if not rows:
+        return
+    return get_client().table("chat_owner_cache").upsert(
+        rows, on_conflict="chat_id"
+    ).execute()

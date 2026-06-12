@@ -29,16 +29,25 @@ class FacebookAdsClient:
             "access_token": self.token,
         }
 
+        last_error = None
         for attempt in range(3):
             try:
                 async with aiohttp.ClientSession() as session:
                     async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
                         data = await resp.json()
                         if "error" in data:
-                            logger.error(f"FB API error: {data['error']}")
-                            return {"spend": 0.0, "impressions": 0, "inline_link_clicks": 0}
+                            err = data["error"]
+                            last_error = err
+                            # Transient errors → retry
+                            if err.get("is_transient") or err.get("code") in (1, 2, 4, 17, 32, 613):
+                                logger.warning(f"FB API transient error (attempt {attempt+1}): {err.get('message')}")
+                                if attempt < 2:
+                                    await asyncio.sleep(2 ** attempt)
+                                    continue
+                            raise RuntimeError(f"FB API error: {err}")
                         items = data.get("data", [])
                         if not items:
+                            # Це нормальна ситуація — за цей день не було показів
                             return {"spend": 0.0, "impressions": 0, "inline_link_clicks": 0}
                         row = items[0]
                         return {
@@ -46,9 +55,12 @@ class FacebookAdsClient:
                             "impressions": int(row.get("impressions", 0)),
                             "inline_link_clicks": int(row.get("inline_link_clicks", 0)),
                         }
+            except RuntimeError:
+                raise
             except Exception as e:
+                last_error = e
                 logger.warning(f"FB API attempt {attempt+1} failed: {e}")
                 if attempt < 2:
                     await asyncio.sleep(2 ** attempt)
 
-        return {"spend": 0.0, "impressions": 0, "inline_link_clicks": 0}
+        raise RuntimeError(f"FB API failed after 3 attempts: {last_error}")
