@@ -53,6 +53,7 @@ async def main():
     print(f"  Заявок:            {stats['leads']}")
     print(f"  Продажів всього:   {stats['sales_total']}")
     print(f"  Повторних:         {stats['sales_repeat']}")
+    print(f"  Товарів к-сть:     {stats['products_qty']}")
     print(f"  FB бюджет:         {stats['fb_spend']:.2f} грн")
     print(f"  FB показів:        {stats['fb_impressions']}")
     print(f"  FB кліків:         {stats['fb_clicks']}")

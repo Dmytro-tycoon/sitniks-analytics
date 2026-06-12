@@ -72,14 +72,16 @@ async def _get_sitniks_stats(sitniks: SitniksClient, target_date: date) -> dict:
     to_sum = sum(float(o.get("totalPrice", 0)) for o in hair_orders)
     sales_total = len(hair_orders)
 
-    # Маржа = Σ (price - costPrice) × quantity по всіх продуктах
+    # Маржа і кількість товарів з продуктів замовлень
     margin_sum = 0.0
+    products_qty = 0
     for order in hair_orders:
         for product in order.get("products", []):
             price = float(product.get("price", 0))
             cost = float(product.get("costPrice", 0))
-            qty = float(product.get("quantity", 1))
+            qty = int(product.get("quantity", 1))
             margin_sum += (price - cost) * qty
+            products_qty += qty
 
     # 3. Нові чати skin.one.hair за день (firstMessage = сьогодні)
     new_chats_all = await sitniks.get_all_chats(start_dt, end_dt, by_first_message=True)
@@ -99,8 +101,8 @@ async def _get_sitniks_stats(sitniks: SitniksClient, target_date: date) -> dict:
     logger.info(
         f"Sitniks hair stats {target_date}: "
         f"ТО={to_sum:.2f} грн, маржа={margin_sum:.2f} грн, замовлень={sales_total}, "
-        f"нових чатів={new_chats_count}, замовлень з діючих={existing_orders_count}, "
-        f"заявок={leads}"
+        f"товарів={products_qty}, нових чатів={new_chats_count}, "
+        f"замовлень з діючих={existing_orders_count}, заявок={leads}"
     )
 
     return {
@@ -109,6 +111,7 @@ async def _get_sitniks_stats(sitniks: SitniksClient, target_date: date) -> dict:
         "leads": leads,
         "sales_total": sales_total,
         "sales_repeat": 0,  # поки що 0 — розділення по брендах в роботі
+        "products_qty": products_qty,
     }
 
 
