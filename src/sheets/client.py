@@ -68,7 +68,7 @@ class SheetsClient:
         sheet = self._sheet_name(month)
         result = self._service.spreadsheets().values().get(
             spreadsheetId=self.spreadsheet_id,
-            range=f"'{sheet}'!A{LOWER_DATE_ROW}:AJ{LOWER_DATE_ROW}",
+            range=f"'{sheet}'!A{LOWER_DATE_ROW}:AQ{LOWER_DATE_ROW}",  # AQ покриває всі можливі місяці
         ).execute()
         row = result.get("values", [[]])[0]
         for idx, val in enumerate(row):

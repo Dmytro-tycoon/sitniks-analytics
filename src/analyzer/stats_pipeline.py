@@ -18,6 +18,11 @@ logger = logging.getLogger(__name__)
 HAIR_OWNER_NAME = "skin.one.hair"
 HAIR_AD_ACCOUNT = "act_1147671684177345"
 
+# Instagram-промоції (фіксована щоденна добавка до Facebook даних)
+INSTAGRAM_DAILY_SPEND       = 310.0   # ₴
+INSTAGRAM_DAILY_IMPRESSIONS = 2_570
+INSTAGRAM_DAILY_CLICKS      = 48      # відвідувань профілю (пропорційно бюджету)
+
 KIEV_TZ = timezone(timedelta(hours=3))
 
 
@@ -123,10 +128,19 @@ async def _get_fb_stats(fb: FacebookAdsClient, target_date: date) -> dict:
         f"spend={data['spend']}, impressions={data['impressions']}, "
         f"clicks={data['inline_link_clicks']}"
     )
+    total_spend       = data["spend"] + INSTAGRAM_DAILY_SPEND
+    total_impressions = data["impressions"] + INSTAGRAM_DAILY_IMPRESSIONS
+    total_clicks      = data["inline_link_clicks"] + INSTAGRAM_DAILY_CLICKS
+
+    logger.info(
+        f"  + Instagram: spend={INSTAGRAM_DAILY_SPEND}, "
+        f"impressions={INSTAGRAM_DAILY_IMPRESSIONS}, clicks={INSTAGRAM_DAILY_CLICKS}"
+    )
+
     return {
-        "fb_spend": data["spend"],
-        "fb_impressions": data["impressions"],
-        "fb_clicks": data["inline_link_clicks"],
+        "fb_spend":       round(total_spend, 2),
+        "fb_impressions": total_impressions,
+        "fb_clicks":      total_clicks,
     }
 
 
