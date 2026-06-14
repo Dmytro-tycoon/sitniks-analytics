@@ -29,9 +29,13 @@ async def daily_analysis_job():
 
 
 async def daily_hair_stats_job():
-    """Щоранку о 07:00: збір статистики skin.one.hair → Google Sheets"""
-    from datetime import date, timedelta
-    yesterday = date.today() - timedelta(days=1)
+    """Щоранку о 05:30 Київ: збір статистики skin.one.hair → Google Sheets.
+
+    Розраховує "вчорашній день" за Києвом (не за UTC),
+    щоб уникнути плутанини при пуску близько до півночі.
+    """
+    from datetime import timedelta
+    yesterday = (datetime.now(KIEV_TZ) - timedelta(days=1)).date()
     print(f"[{datetime.now()}] daily_hair_stats_job started for {yesterday}")
     try:
         sheets = SheetsClient(
@@ -45,11 +49,19 @@ async def daily_hair_stats_job():
         )
         print(f"[{datetime.now()}] daily_hair_stats_job done")
     except Exception as e:
+        # run_stats_for_date уже шле Telegram-сповіщення про помилку
         print(f"[{datetime.now()}] daily_hair_stats_job FAILED: {e}")
 
 
 def setup_scheduler() -> AsyncIOScheduler:
-    scheduler = AsyncIOScheduler(timezone=KIEV_TZ)
+    # job_defaults: якщо job не запустився вчасно (deploy/restart) —
+    # apscheduler наздожене протягом 3 годин (misfire_grace_time=10800).
+    # coalesce=True: якщо пропущено кілька запусків — зробити лише один.
+    job_defaults = {
+        "misfire_grace_time": 3 * 60 * 60,
+        "coalesce": True,
+    }
+    scheduler = AsyncIOScheduler(timezone=KIEV_TZ, job_defaults=job_defaults)
     scheduler.add_job(
         daily_analysis_job,
         CronTrigger(hour=6, minute=0, timezone=KIEV_TZ),
