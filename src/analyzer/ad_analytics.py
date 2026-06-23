@@ -57,13 +57,21 @@ async def build_ad_report(date_from: datetime, date_to: datetime,
         skipped = before - len(resolved)
 
     counts: Dict[str, int] = defaultdict(int)
-    for _, title in resolved:
+    sums: Dict[str, float] = defaultdict(float)
+    for order, title in resolved:
         counts[title] += 1
+        # totalPriceDiscount враховує знижки; fallback на totalPrice
+        amount = order.get("totalPriceDiscount")
+        if amount is None:
+            amount = order.get("totalPrice") or 0
+        sums[title] += float(amount or 0)
 
     return {
         "date": date_from.strftime("%d.%m.%Y"),
         "stats": dict(counts),
+        "sums": dict(sums),
         "total": sum(counts.values()),
+        "total_sum": sum(sums.values()),
         "orders_resolved": resolved,
         "skipped_already_reported": skipped,
     }
@@ -88,22 +96,29 @@ def mark_report_as_sent(report: Dict):
     return len(rows)
 
 
+def _fmt_uah(amount: float) -> str:
+    """1234.5 → '1 234 ₴'  (без копійок, з нерозривним пробілом для розрядів)."""
+    return f"{int(round(amount)):,} ₴".replace(",", " ")
+
+
 def format_ad_report(report: Dict) -> str:
     """Форматує звіт для Telegram (HTML)."""
     stats = report["stats"]
+    sums = report.get("sums", {})
     total = report["total"]
+    total_sum = report.get("total_sum", 0)
     date = report["date"]
 
     if not stats:
         return f"📊 За {date} замовлень не знайдено."
 
-    # Сортуємо за кількістю
-    sorted_items = sorted(stats.items(), key=lambda x: x[1], reverse=True)
+    # Сортуємо за СУМОЮ (від найвигіднішої реклами до найгіршої)
+    sorted_items = sorted(stats.items(), key=lambda x: sums.get(x[0], 0), reverse=True)
 
     medals = ["🥇", "🥈", "🥉"]
     lines = [
         f"📣 <b>Замовлення по рекламних постах за {date}</b>",
-        f"Всього замовлень: <b>{total}</b>",
+        f"Всього замовлень: <b>{total}</b>  |  на суму <b>{_fmt_uah(total_sum)}</b>",
     ]
     skipped = report.get("skipped_already_reported", 0)
     if skipped:
@@ -112,8 +127,9 @@ def format_ad_report(report: Dict) -> str:
 
     for i, (title, count) in enumerate(sorted_items):
         icon = medals[i] if i < len(medals) else "▪️"
-        pct = round(count / total * 100) if total else 0
+        amount = sums.get(title, 0)
+        pct = round(amount / total_sum * 100) if total_sum else 0
         lines.append(f"{icon} {title}")
-        lines.append(f"   → <b>{count}</b> замовлень ({pct}%)")
+        lines.append(f"   → <b>{count}</b> зам. на <b>{_fmt_uah(amount)}</b> ({pct}%)")
 
     return "\n".join(lines)
