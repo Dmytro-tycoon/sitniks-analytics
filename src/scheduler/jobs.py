@@ -64,7 +64,7 @@ def setup_scheduler() -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone=KIEV_TZ, job_defaults=job_defaults)
     scheduler.add_job(
         daily_analysis_job,
-        CronTrigger(hour=6, minute=0, timezone=KIEV_TZ),
+        CronTrigger(hour=5, minute=30, timezone=KIEV_TZ),
         id="daily_analysis",
         replace_existing=True,
     )
