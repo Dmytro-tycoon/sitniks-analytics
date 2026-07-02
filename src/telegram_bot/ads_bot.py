@@ -158,7 +158,7 @@ async def reattribute_yesterday(target_date: datetime = None, dry_run: bool = Fa
 
     # Свіжа атрибуція (без exclude_reported)
     fresh = await build_ad_report(date_from, date_to)
-    fresh_map = {o["id"]: t for o, t in fresh["orders_resolved"]}
+    fresh_map = {item[0]["id"]: item[1] for item in fresh["orders_resolved"]}
 
     # Старі дані з БД
     res = get_client().table("reported_ad_orders") \
@@ -188,7 +188,7 @@ async def reattribute_yesterday(target_date: datetime = None, dry_run: bool = Fa
     rows_to_upsert = []
     for d in diffs:
         # знайдемо chat_id серед свіжих
-        order = next((o for o, t in fresh["orders_resolved"] if o["id"] == d["order_id"]), None)
+        order = next((item[0] for item in fresh["orders_resolved"] if item[0]["id"] == d["order_id"]), None)
         rows_to_upsert.append({
             "order_id": d["order_id"],
             "ad_title": d["new"],

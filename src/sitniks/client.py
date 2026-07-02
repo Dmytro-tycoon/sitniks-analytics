@@ -125,6 +125,9 @@ class SitniksClient:
 
         before_iso — ISO-дата (createdAt замовлення): шукаємо найсвіжіший adInfo
         зі створенням <= before_iso. Якщо немає — fallback на будь-яке adInfo.
+
+        Повертає dict: {**adInfo, "_messageCreatedAt": "<iso>"} — щоб можна було
+        визначити наскільки старий контакт з рекламою відносно замовлення.
         """
         try:
             messages = await self.get_chat_messages(chat_id)  # відсортовано ASC
@@ -134,8 +137,10 @@ class SitniksClient:
             if before_iso:
                 in_window = [m for m in ads if (m.get("createdAt") or "") <= before_iso]
                 if in_window:
-                    return in_window[-1]["adInfo"]
-            return ads[-1]["adInfo"]
+                    picked = in_window[-1]
+                    return {**picked["adInfo"], "_messageCreatedAt": picked.get("createdAt")}
+            picked = ads[-1]
+            return {**picked["adInfo"], "_messageCreatedAt": picked.get("createdAt")}
         except Exception:
             return None
 
