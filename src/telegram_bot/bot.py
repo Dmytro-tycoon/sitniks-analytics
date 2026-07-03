@@ -48,15 +48,29 @@ def _remember(message: Message):
         sys.stdout.flush()
 
 
-@dp.message(Command("start"))
+@dp.message(Command("start", "help"))
 async def cmd_start(message: Message):
     _remember(message)
     await message.answer(
-        "👋 Привіт! Я бот аналітики Sitniks.\n\n"
-        "Команди:\n"
-        "/today — звіт за сьогодні\n"
-        "/yesterday — звіт за вчора\n"
-        "/manager &lt;ім'я&gt; — звіт по менеджеру (за вчора)\n"
+        "👋 Я аналізую переписки менеджерів і допомагаю керувати відділом продажів.\n\n"
+        "<b>📊 Звіти</b>\n"
+        "/today, /yesterday — звіт за день\n"
+        "/manager Ім'я — розбір менеджера\n"
+        "/leaderboard — рейтинг менеджерів (7 днів)\n"
+        "/trends — динаміка по тижнях\n\n"
+        "<b>🚨 Контроль</b>\n"
+        "/alerts — що потребує уваги зараз\n"
+        "/hot — гарячі ліди без замовлення\n"
+        "/lost — втрачені клієнти і причини\n"
+        "/objections — топ заперечень\n\n"
+        "<b>🤝 Поради (Claude)</b>\n"
+        "/reco Ім'я — рекомендації по менеджеру\n"
+        "/plan Ім'я — план зростання менеджера\n"
+        "/objection текст — як відповісти на заперечення\n\n"
+        "<b>🧠 База знань</b>\n"
+        "/ask питання — відповідь по всіх переписках\n"
+        "/faq — часті питання клієнтів\n\n"
+        "<b>⚙️ Сервісне</b>\n"
         "/whoami — мій chat_id",
         parse_mode="HTML",
     )
@@ -262,6 +276,177 @@ async def cb_comment(message: Message):
     dialog_id = m.group(1)
     save_feedback(dialog_id, confirmed=False, comment=message.text)
     await message.reply(f"💾 Коментар збережено для <code>{dialog_id}</code>", parse_mode="HTML")
+
+
+# ══ Sales-agent інтеграція ═══════════════════════════════════════════════
+# Нові команди від Dreammarketing/sales-agent:
+# /alerts /hot /lost /objections /leaderboard /trends
+# /reco /plan /objection /ask /faq
+from src.analyzer.insights import manager_effectiveness
+from src.coach.advisor import (
+    growth_plan as _growth_plan,
+    handle_objection as _handle_objection,
+    manager_recommendations as _manager_recommendations,
+    suggest_reply as _suggest_reply,
+)
+from src.rag.knowledge import ask as _rag_ask, build_faq as _build_faq
+from src.database.supabase_client import get_analyses_range
+from src.telegram_bot.insights_reports import (
+    format_alerts as _fmt_alerts,
+    format_leaderboard as _fmt_leaderboard,
+    format_hot as _fmt_hot,
+    format_lost as _fmt_lost,
+    format_objections as _fmt_objections,
+    format_trends as _fmt_trends,
+)
+import pytz
+
+
+def _recent_rows(days: int) -> list:
+    """Плоский список аналізів за N днів (для insights/coach/rag)."""
+    tz = pytz.timezone(settings.ANALYSIS_TIMEZONE)
+    today = datetime.now(tz).date()
+    start = (today - timedelta(days=days)).isoformat()
+    return get_analyses_range(start, today.isoformat())
+
+
+def _today_rows() -> list:
+    tz = pytz.timezone(settings.ANALYSIS_TIMEZONE)
+    d = datetime.now(tz).date().isoformat()
+    return get_analyses_by_date(d).data
+
+
+@dp.message(Command("leaderboard"))
+async def cmd_leaderboard(message: Message):
+    _remember(message)
+    await message.answer(_fmt_leaderboard(_recent_rows(7)), parse_mode="HTML", disable_web_page_preview=True)
+
+
+@dp.message(Command("trends"))
+async def cmd_trends(message: Message):
+    _remember(message)
+    await message.answer(_fmt_trends(_recent_rows(56)), parse_mode="HTML", disable_web_page_preview=True)
+
+
+@dp.message(Command("alerts"))
+async def cmd_alerts(message: Message):
+    _remember(message)
+    await message.answer(_fmt_alerts(_today_rows()), parse_mode="HTML", disable_web_page_preview=True)
+
+
+@dp.message(Command("hot"))
+async def cmd_hot(message: Message):
+    _remember(message)
+    await message.answer(_fmt_hot(_recent_rows(3)), parse_mode="HTML", disable_web_page_preview=True)
+
+
+@dp.message(Command("lost"))
+async def cmd_lost(message: Message):
+    _remember(message)
+    await message.answer(_fmt_lost(_recent_rows(7)), parse_mode="HTML", disable_web_page_preview=True)
+
+
+@dp.message(Command("objections"))
+async def cmd_objections(message: Message):
+    _remember(message)
+    await message.answer(_fmt_objections(_recent_rows(7)), parse_mode="HTML", disable_web_page_preview=True)
+
+
+@dp.message(Command("reco"))
+async def cmd_reco(message: Message):
+    _remember(message)
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer("Використання: <code>/reco Ім'я</code>", parse_mode="HTML")
+        return
+    name = parts[1].strip()
+    eff = manager_effectiveness(_recent_rows(30), name)
+    if not eff:
+        await message.answer("Немає даних по цьому менеджеру за 30 днів.")
+        return
+    try:
+        res = await _manager_recommendations(name, eff)
+    except Exception as e:
+        await message.answer(f"❌ Помилка Claude: {e}")
+        return
+    recs = res.get("recommendations") or []
+    txt = "💡 <b>Рекомендації для " + name + "</b>\n" + "\n".join(f"• {r}" for r in recs)
+    await message.answer(txt, parse_mode="HTML")
+
+
+@dp.message(Command("plan"))
+async def cmd_plan(message: Message):
+    _remember(message)
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer("Використання: <code>/plan Ім'я</code>", parse_mode="HTML")
+        return
+    name = parts[1].strip()
+    eff = manager_effectiveness(_recent_rows(30), name)
+    if not eff:
+        await message.answer("Немає даних по цьому менеджеру за 30 днів.")
+        return
+    try:
+        res = await _growth_plan(name, eff)
+    except Exception as e:
+        await message.answer(f"❌ Помилка Claude: {e}")
+        return
+    lines = [f"📈 <b>План зростання: {name}</b>"]
+    for f in (res.get("focuses") or []):
+        lines.append(f"• <b>{f.get('area','')}</b>: {f.get('action','')}")
+    await message.answer("\n".join(lines), parse_mode="HTML")
+
+
+@dp.message(Command("objection"))
+async def cmd_objection(message: Message):
+    _remember(message)
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer("Використання: <code>/objection дорого</code>", parse_mode="HTML")
+        return
+    try:
+        res = await _handle_objection(parts[1].strip())
+    except Exception as e:
+        await message.answer(f"❌ Помилка Claude: {e}")
+        return
+    replies = res.get("replies") or []
+    await message.answer("🛡 <b>Варіанти відповіді:</b>\n\n" + "\n\n".join(replies), parse_mode="HTML")
+
+
+@dp.message(Command("ask"))
+async def cmd_ask(message: Message):
+    _remember(message)
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer("Використання: <code>/ask де клієнти злились на ціні</code>", parse_mode="HTML")
+        return
+    try:
+        res = await _rag_ask(parts[1].strip(), _recent_rows(30))
+    except Exception as e:
+        await message.answer(f"❌ Помилка Claude: {e}")
+        return
+    text = "🧠 " + (res.get("answer") or "—")
+    for c in (res.get("citations") or [])[:5]:
+        text += f"\n\n<i>{c.get('manager','—')}: «{c.get('quote','')}»</i>"
+    await message.answer(text, parse_mode="HTML", disable_web_page_preview=True)
+
+
+@dp.message(Command("faq"))
+async def cmd_faq(message: Message):
+    _remember(message)
+    try:
+        res = await _build_faq(_recent_rows(30))
+    except Exception as e:
+        await message.answer(f"❌ Помилка Claude: {e}")
+        return
+    faq = res.get("faq") or []
+    if not faq:
+        await message.answer("Поки недостатньо даних для FAQ.")
+        return
+    lines = ["❓ <b>Часті питання клієнтів:</b>"]
+    for q in faq:
+        lines.append(f"\n<b>{q.get('question','')}</b> ({q.get('how_often','')})\n{q.get('good_answer','')}")
+    await message.answer("\n".join(lines), parse_mode="HTML")
 
 
 @dp.message()

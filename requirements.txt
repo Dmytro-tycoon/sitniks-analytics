@@ -8,3 +8,4 @@ pydantic==2.9.0
 pytz==2024.2
 google-api-python-client==2.151.0
 google-auth==2.36.0
+PyYAML==6.0.2

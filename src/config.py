@@ -1,10 +1,33 @@
 import json
+from functools import lru_cache
 from dotenv import load_dotenv
 from pathlib import Path
 import os
 
 _root = Path(__file__).parent.parent
 load_dotenv(_root / ".env", override=True)
+
+
+@lru_cache(maxsize=4)
+def _load_client_yaml(name: str) -> dict:
+    """Читає clients/<name>.yaml. Ліниво, не падає якщо файлу немає."""
+    path = _root / "clients" / f"{name}.yaml"
+    if not path.exists():
+        return {}
+    try:
+        import yaml
+        return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return {}
+
+
+@lru_cache(maxsize=4)
+def _load_client_context(name: str) -> str:
+    """Читає clients/<name>.context.md. Порожньо якщо файлу немає."""
+    path = _root / "clients" / f"{name}.context.md"
+    if path.exists():
+        return path.read_text(encoding="utf-8")
+    return ""
 
 
 class Settings:
@@ -79,6 +102,53 @@ class Settings:
     def HAIR_STATS_SPREADSHEET_ID(self):
         return os.getenv("HAIR_STATS_SPREADSHEET_ID",
                          "1WUI5RYPXH9Dghq2L2OthjKug4cJjK1p9e_qcs2ujBpA")
+
+    # ── Multi-tenant client config (з sales-agent) ──────────────────────
+    @property
+    def client_name(self) -> str:
+        return os.getenv("CLIENT", "skin_one")
+
+    @property
+    def client(self) -> dict:
+        return _load_client_yaml(self.client_name)
+
+    @property
+    def niche(self) -> str:
+        return (self.client.get("client") or {}).get("niche", "продажів")
+
+    @property
+    def language(self) -> str:
+        return (self.client.get("client") or {}).get("language", "uk")
+
+    @property
+    def timezone(self) -> str:
+        return (self.client.get("client") or {}).get("timezone", "Europe/Kiev")
+
+    @property
+    def crm_provider(self) -> str:
+        return (self.client.get("crm") or {}).get("provider", "sitniks")
+
+    @property
+    def models(self) -> dict:
+        return self.client.get("models") or {
+            "analysis": "claude-sonnet-4-6",
+            "rag":      "claude-sonnet-4-6",
+            "reply":    "claude-sonnet-4-6",
+        }
+
+    @property
+    def criteria(self) -> str:
+        return self.client.get("criteria", "")
+
+    @property
+    def business_context(self) -> str:
+        """Бізнес-контекст з clients/<name>.context.md — підмішується в промпти."""
+        return _load_client_context(self.client_name)
+
+    # Sales bot (окремий автопілот, поки не використовується активно)
+    @property
+    def TELEGRAM_SALES_BOT_TOKEN(self):
+        return os.getenv("TELEGRAM_SALES_BOT_TOKEN", "")
 
 
 settings = Settings()

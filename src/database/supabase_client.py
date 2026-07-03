@@ -104,3 +104,56 @@ def cache_chat_owners(rows: list):
     return get_client().table("chat_owner_cache").upsert(
         rows, on_conflict="chat_id"
     ).execute()
+
+
+# ══ Sales-agent інтеграція ═══════════════════════════════════════════════
+# Sales-agent модулі імпортують `_db` — робимо аліас на існуючий get_client
+def _db() -> Client:
+    return get_client()
+
+
+def get_analyses_range(date_from_iso: str, date_to_iso: str) -> list:
+    """Плоский список аналізів за проміжок (використовується insights/rag)."""
+    return (
+        get_client()
+        .table("dialog_analyses")
+        .select("*")
+        .gte("dialog_date", date_from_iso)
+        .lte("dialog_date", date_to_iso)
+        .execute()
+        .data
+    )
+
+
+def save_tone(row: dict):
+    """Winning moves / objection playbook від кращих менеджерів."""
+    return get_client().table("tone_of_voice").insert(row).execute()
+
+
+def save_agent_feedback(row: dict):
+    """Окрема таблиця feedback для sales-agent (не плутати з user_confirmed в dialog_analyses)."""
+    return get_client().table("agent_feedback").insert(row).execute()
+
+
+def get_learned_examples(limit: int = 5) -> str:
+    """Останні виправлення керівника → підмішується у промпт аналізатора."""
+    try:
+        rows = (
+            get_client()
+            .table("agent_feedback")
+            .select("*")
+            .eq("correct", False)
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+            .data
+        )
+    except Exception:
+        return ""
+    if not rows:
+        return ""
+    parts = ["ВРАХУЙ ПОПЕРЕДНІ ВИПРАВЛЕННЯ КЕРІВНИКА (вчись на них):"]
+    for r in rows:
+        parts.append(f"- Діалог: {(r.get('dialog_excerpt') or '')[:200]}")
+        parts.append(f"  Правильна оцінка: {r.get('correction', '')}")
+    return "\n".join(parts)
