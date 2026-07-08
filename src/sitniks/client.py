@@ -29,6 +29,21 @@ class SitniksClient:
             return response.json()
         return {}
 
+    async def _post_with_retry(self, url: str, json_body: dict) -> dict:
+        """POST з retry на 429 (експоненційний backoff)."""
+        backoff = 2
+        for attempt in range(6):
+            response = await self.client.post(url, headers=self.headers, json=json_body)
+            if response.status_code == 429:
+                if attempt == 5:
+                    response.raise_for_status()
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 30)
+                continue
+            response.raise_for_status()
+            return response.json()
+        return {}
+
     async def get_chats(
         self,
         date_from: datetime,
@@ -66,6 +81,24 @@ class SitniksClient:
                 break
             skip += limit
         return all_chats
+
+    async def send_message(self, chat_id: str, text: str, attachments: List[str] = None) -> Dict:
+        """POST /chats/{chatId}/messages — програмна відправка повідомлення від імені менеджера.
+
+        Args:
+            chat_id: Sitniks chat ID
+            text: текст повідомлення
+            attachments: опційно — список URL вкладень
+        Returns:
+            створене повідомлення (той же формат що GET .../messages).
+        """
+        body: Dict = {"text": text}
+        if attachments:
+            body["attachments"] = attachments
+        return await self._post_with_retry(
+            f"{self.base_url}/chats/{chat_id}/messages",
+            json_body=body,
+        )
 
     async def get_chat_messages(self, chat_id: str) -> List[Dict]:
         """Усі повідомлення чату через пагінацію (API віддає 10 за замовченням,

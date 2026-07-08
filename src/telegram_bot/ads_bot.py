@@ -217,4 +217,13 @@ async def reattribute_yesterday(target_date: datetime = None, dry_run: bool = Fa
             await ads_bot.send_message(chat_id, chunk, disable_web_page_preview=True)
         print(f"[reattribute] correction alert sent → {chat_id}")
 
+    # Оновлюємо і Google Sheet — якщо змінилась атрибуція, суми по рекламах теж
+    # можуть змінитися, тому переписуємо клітинки за цю дату
+    try:
+        from src.sheets.ads_sums import write_daily_sums_to_sheet
+        await write_daily_sums_to_sheet(target_date=date_from.date())
+        print(f"[reattribute] Google Sheet updated for {label}")
+    except Exception as e:
+        print(f"[reattribute] sheet update FAILED: {e}")
+
     return {"diffs": len(diffs), "updated": len(rows_to_upsert)}

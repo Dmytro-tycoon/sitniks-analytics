@@ -8,6 +8,7 @@ from src.telegram_bot.bot import send_daily_reports
 from src.telegram_bot.ads_bot import send_daily_ads_report, reattribute_yesterday
 from src.analyzer.stats_pipeline import run_stats_for_date
 from src.sheets.client import SheetsClient
+from src.sheets.ads_sums import write_daily_sums_to_sheet
 from src.config import settings
 
 KIEV_TZ = pytz.timezone("Europe/Kiev")
@@ -26,6 +27,16 @@ async def daily_analysis_job():
         print(f"[{datetime.now()}] daily_analysis_job done")
     except Exception as e:
         print(f"[{datetime.now()}] daily_analysis_job FAILED: {e}")
+
+
+async def daily_ads_sheet_job():
+    """Щоранку о 08:45 Київ: пише суми по рекламних постах у Google Sheets."""
+    print(f"[{datetime.now()}] daily_ads_sheet_job started")
+    try:
+        result = await write_daily_sums_to_sheet()
+        print(f"[{datetime.now()}] daily_ads_sheet_job done: {result}")
+    except Exception as e:
+        print(f"[{datetime.now()}] daily_ads_sheet_job FAILED: {e}")
 
 
 async def daily_hair_stats_job():
@@ -84,6 +95,12 @@ def setup_scheduler() -> AsyncIOScheduler:
         daily_hair_stats_job,
         CronTrigger(hour=5, minute=30, timezone=KIEV_TZ),
         id="daily_hair_stats",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        daily_ads_sheet_job,
+        CronTrigger(hour=8, minute=45, timezone=KIEV_TZ),
+        id="daily_ads_sheet",
         replace_existing=True,
     )
     return scheduler

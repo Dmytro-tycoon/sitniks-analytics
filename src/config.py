@@ -103,6 +103,11 @@ class Settings:
         return os.getenv("HAIR_STATS_SPREADSHEET_ID",
                          "1WUI5RYPXH9Dghq2L2OthjKug4cJjK1p9e_qcs2ujBpA")
 
+    @property
+    def ADS_SHEET_ID(self):
+        return os.getenv("ADS_SHEET_ID",
+                         "1vM6SIydglC0K0b-bZE5woq--2CK-BubXL8yfdnJqweQ")
+
     # ── Multi-tenant client config (з sales-agent) ──────────────────────
     @property
     def client_name(self) -> str:
