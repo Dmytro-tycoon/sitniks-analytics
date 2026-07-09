@@ -260,8 +260,17 @@ async def write_daily_sums_to_sheet(target_date: Optional[date] = None) -> Dict:
     date_from = KIEV_TZ.localize(datetime(target_date.year, target_date.month, target_date.day, 0, 0, 0))
     date_to = date_from + timedelta(days=1)
 
+    from src.analyzer.ad_analytics import NO_AD_LABEL
+
     report = await build_ad_report(date_from, date_to)
-    sums = report.get("sums", {})
+    sums = dict(report.get("sums", {}))
+
+    # За побажанням: суми зі "Старої атрибуції" (контакт з рекламою >30 днів
+    # до замовлення) — вважаємо еквівалентом прямих замовлень і додаємо
+    # до "Без реклами (прямі)".
+    stale_total_sum = float(report.get("stale_total_sum", 0) or 0)
+    if stale_total_sum:
+        sums[NO_AD_LABEL] = sums.get(NO_AD_LABEL, 0) + stale_total_sum
 
     sheet = AdsSumsSheet(sheet_id)
     sheet.write_day(target_date, sums)
@@ -269,5 +278,6 @@ async def write_daily_sums_to_sheet(target_date: Optional[date] = None) -> Dict:
     return {
         "date": target_date.isoformat(),
         "ads_written": len(sums),
-        "total_sum": report.get("total_sum", 0),
+        "total_sum": report.get("total_sum", 0) + stale_total_sum,
+        "stale_added_to_direct": stale_total_sum,
     }
