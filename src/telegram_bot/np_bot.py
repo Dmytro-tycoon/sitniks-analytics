@@ -46,6 +46,13 @@ class EditFlow(StatesGroup):
     confirming_cod_remove = State()
 
 
+class RedirectFlow(StatesGroup):
+    waiting_city = State()
+    choosing_city = State()
+    waiting_warehouse = State()
+    confirming = State()
+
+
 def _only_operator(message: Message) -> bool:
     ids = settings.NP_OPERATOR_CHAT_IDS
     return message.chat.id in ids if ids else True
@@ -86,7 +93,8 @@ async def cmd_start(message: Message):
     await message.answer(
         "📮 <b>Бот Нової Пошти</b>\n\n"
         "• /registry — створити реєстр з чернеток\n"
-        "• /edit <code>&lt;номер ТТН&gt;</code> — редагувати ТТН (телефон/ПІБ/НП)"
+        "• /edit <code>&lt;номер ТТН&gt;</code> — редагувати ТТН (телефон/ПІБ/НП)\n"
+        "• /redirect <code>&lt;номер ТТН&gt;</code> — переадресація на інше відділення"
     )
 
 
@@ -385,6 +393,219 @@ async def cb_cod_yes(callback: CallbackQuery, state: FSMContext):
 
 @np_dp.callback_query(EditFlow.confirming_cod_remove, F.data == "np_edit:cod_no")
 async def cb_cod_no(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await state.clear()
+    await callback.message.answer("Скасовано.")
+    await callback.answer()
+
+
+# ── /redirect ─────────────────────────────────────────────────────────────────
+
+@np_dp.message(Command("redirect"))
+async def cmd_redirect(message: Message, command: CommandObject, state: FSMContext):
+    if not _only_operator(message):
+        return
+    ttn = (command.args or "").strip()
+    if not ttn or not ttn.isdigit():
+        await message.answer("Формат: <code>/redirect 20451480238945</code>")
+        return
+
+    await message.answer(f"⏳ Шукаю ТТН <code>{ttn}</code>…")
+
+    accounts = settings.NP_ACCOUNTS
+    found_doc = None
+    found_idx = -1
+    for i, acc in enumerate(accounts):
+        client = NovaPooshtaClient(acc["key"])
+        try:
+            doc = await client.find_document(ttn)
+            if doc:
+                found_doc, found_idx = doc, i
+                break
+        except Exception:
+            pass
+        finally:
+            await client.close()
+
+    if not found_doc:
+        await message.answer("❌ ТТН не знайдено в жодному з кабінетів.")
+        return
+
+    if found_doc.is_draft:
+        await message.answer("⚠️ ТТН ще чернетка. Переадресація доступна після прийому на склад НП.")
+        return
+
+    account = accounts[found_idx]
+    raw = found_doc.raw
+    await state.set_state(RedirectFlow.waiting_city)
+    await state.update_data(
+        account_index=found_idx,
+        ttn=ttn,
+        recipient_ref=raw.get("Recipient", ""),
+        recipient_name=found_doc.recipient_name or raw.get("RecipientContactPerson", ""),
+        recipient_phone=raw.get("RecipientsPhone", ""),
+    )
+    await message.answer(
+        f"📦 <b>ТТН #{ttn}</b>\n"
+        f"Кабінет: {account['name']}\n"
+        f"Отримувач: {found_doc.recipient_name}\n"
+        f"Поточна адреса: {found_doc.recipient_city}\n\n"
+        f"Введи <b>назву нового міста</b> (напр. <code>Київ</code> або <code>Львів</code>):"
+    )
+
+
+@np_dp.message(RedirectFlow.waiting_city)
+async def msg_redirect_city(message: Message, state: FSMContext):
+    query = (message.text or "").strip()
+    if len(query) < 2:
+        await message.answer("Введи мінімум 2 символи назви міста:")
+        return
+
+    data = await state.get_data()
+    account = settings.NP_ACCOUNTS[data["account_index"]]
+    client = NovaPooshtaClient(account["key"])
+    try:
+        cities = await client.search_settlements(query, limit=8)
+    except Exception as e:
+        await message.answer(f"❌ Помилка пошуку: {e}")
+        await client.close()
+        return
+    await client.close()
+
+    if not cities:
+        await message.answer("Нічого не знайдено. Спробуй іншу назву:")
+        return
+
+    # Зберігаємо список міст і показуємо кнопки
+    await state.update_data(cities=cities)
+    kb_rows = []
+    for i, c in enumerate(cities[:8]):
+        label = c.get("Present") or c.get("MainDescription", "")
+        kb_rows.append([InlineKeyboardButton(text=label[:60], callback_data=f"np_rd_city:{i}")])
+    kb_rows.append([InlineKeyboardButton(text="❌ Скасувати", callback_data="np_rd:cancel")])
+    await state.set_state(RedirectFlow.choosing_city)
+    await message.answer("Обери місто:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
+
+
+@np_dp.callback_query(RedirectFlow.choosing_city, F.data.startswith("np_rd_city:"))
+async def cb_redirect_city(callback: CallbackQuery, state: FSMContext):
+    idx = int(callback.data.split(":")[1])
+    data = await state.get_data()
+    city = data["cities"][idx]
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await state.update_data(
+        city_ref=city.get("DeliveryCity") or city.get("Ref"),
+        city_label=city.get("Present") or city.get("MainDescription", ""),
+    )
+    await state.set_state(RedirectFlow.waiting_warehouse)
+    await callback.message.answer(
+        f"Місто: <b>{city.get('Present') or city.get('MainDescription','')}</b>\n\n"
+        f"Введи <b>номер відділення</b> (напр. <code>5</code>):"
+    )
+    await callback.answer()
+
+
+@np_dp.message(RedirectFlow.waiting_warehouse)
+async def msg_redirect_warehouse(message: Message, state: FSMContext):
+    num = (message.text or "").strip()
+    if not num.isdigit():
+        await message.answer("Введи число (номер відділення):")
+        return
+
+    data = await state.get_data()
+    account = settings.NP_ACCOUNTS[data["account_index"]]
+    client = NovaPooshtaClient(account["key"])
+    try:
+        whs = await client.get_warehouses(data["city_ref"], number=num)
+    except Exception as e:
+        await message.answer(f"❌ Помилка: {e}")
+        await client.close()
+        return
+
+    if not whs:
+        await message.answer(f"Відділення №{num} не знайдено в цьому місті. Спробуй інший номер:")
+        await client.close()
+        return
+
+    wh = whs[0]
+    wh_ref = wh.get("Ref", "")
+    wh_desc = wh.get("Description", "")
+
+    # Робимо запит на розрахунок вартості
+    try:
+        pricing = await client.redirect_ttn(
+            ttn_number=data["ttn"],
+            city_ref=data["city_ref"],
+            warehouse_ref=wh_ref,
+            recipient_ref=data["recipient_ref"],
+            recipient_name=data["recipient_name"],
+            recipient_phone=data["recipient_phone"],
+            only_pricing=True,
+        )
+    except Exception as e:
+        await message.answer(f"❌ Не вдалося порахувати: {e}")
+        await client.close()
+        return
+    finally:
+        await client.close()
+
+    p_data = (pricing.get("data") or [{}])[0]
+    cost = p_data.get("Cost") or p_data.get("CostRedelivery") or "?"
+
+    await state.update_data(warehouse_ref=wh_ref, warehouse_label=wh_desc)
+    await state.set_state(RedirectFlow.confirming)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✅ Створити заявку", callback_data="np_rd:confirm"),
+        InlineKeyboardButton(text="❌ Скасувати", callback_data="np_rd:cancel"),
+    ]])
+    await message.answer(
+        f"📋 <b>Підсумок переадресації</b>\n\n"
+        f"ТТН: <code>{data['ttn']}</code>\n"
+        f"Отримувач: {data['recipient_name']} ({data['recipient_phone']})\n"
+        f"Нова адреса: {data['city_label']}, {wh_desc}\n"
+        f"Вартість: <b>{cost} грн</b> (з відправника, безготівка)\n\n"
+        f"Створити заявку?",
+        reply_markup=kb,
+    )
+
+
+@np_dp.callback_query(RedirectFlow.confirming, F.data == "np_rd:confirm")
+async def cb_redirect_confirm(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_reply_markup(reply_markup=None)
+    data = await state.get_data()
+    account = settings.NP_ACCOUNTS[data["account_index"]]
+
+    await callback.message.answer("⏳ Створюю заявку…")
+    client = NovaPooshtaClient(account["key"])
+    try:
+        res = await client.redirect_ttn(
+            ttn_number=data["ttn"],
+            city_ref=data["city_ref"],
+            warehouse_ref=data["warehouse_ref"],
+            recipient_ref=data["recipient_ref"],
+            recipient_name=data["recipient_name"],
+            recipient_phone=data["recipient_phone"],
+            only_pricing=False,
+        )
+        d = (res.get("data") or [{}])[0]
+        number = d.get("Number") or d.get("Ref") or ""
+        cost = d.get("Cost") or "?"
+        await callback.message.answer(
+            f"✅ <b>Заявку на переадресацію створено</b>\n\n"
+            f"№ заявки: <code>{number}</code>\n"
+            f"Нова адреса: {data['city_label']}, {data['warehouse_label']}\n"
+            f"Вартість: {cost} грн"
+        )
+    except Exception as e:
+        await callback.message.answer(f"❌ Помилка: {e}")
+    finally:
+        await client.close()
+    await state.clear()
+    await callback.answer()
+
+
+@np_dp.callback_query(F.data == "np_rd:cancel")
+async def cb_redirect_cancel(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_reply_markup(reply_markup=None)
     await state.clear()
     await callback.message.answer("Скасовано.")

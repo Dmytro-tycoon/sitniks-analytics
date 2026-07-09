@@ -302,6 +302,61 @@ class NovaPooshtaClient:
 
         return await self._call("AdditionalService", "save", props)
 
+    # ── Переадресація ────────────────────────────────────────────────────
+
+    async def search_settlements(self, query: str, limit: int = 10) -> List[dict]:
+        """Пошук міст/сіл за назвою. Повертає список з полями Ref/MainDescription/Present."""
+        res = await self._call("Address", "searchSettlements", {
+            "CityName": query,
+            "Limit": str(limit),
+        })
+        data = res.get("data") or []
+        if not data:
+            return []
+        addresses = data[0].get("Addresses", [])
+        return addresses
+
+    async def get_warehouses(self, city_ref: str, number: Optional[str] = None) -> List[dict]:
+        """Список відділень для міста (за Ref). Якщо number — фільтруємо по номеру."""
+        props = {"CityRef": city_ref, "Limit": "500"}
+        if number:
+            props["WarehouseId"] = str(number)
+        res = await self._call("Address", "getWarehouses", props)
+        return res.get("data") or []
+
+    async def redirect_ttn(
+        self,
+        ttn_number: str,
+        city_ref: str,
+        warehouse_ref: str,
+        recipient_ref: str,
+        recipient_name: str,
+        recipient_phone: str,
+        payer_type: str = "Sender",
+        payment_method: str = "NonCash",
+        service_type: str = "WarehouseWarehouse",
+        only_pricing: bool = False,
+    ) -> dict:
+        """Заявка на переадресацію ТТН.
+        AdditionalServiceGeneral.save з OrderType=orderRedirecting.
+        only_pricing=True → тільки розрахунок ціни; False → реальне створення."""
+        props = {
+            "OrderType": "orderRedirecting",
+            "IntDocNumber": ttn_number,
+            "Customer": "Sender",
+            "Note": "Переадресація через бот",
+            "OnlyGetPricing": 1 if only_pricing else 0,
+            "PayerType": payer_type,
+            "PaymentMethod": payment_method,
+            "Recipient": recipient_ref,
+            "RecipientContactName": recipient_name,
+            "RecipientPhone": recipient_phone,
+            "RecipientWarehouse": warehouse_ref,
+            "Ref": "",
+            "ServiceType": service_type,
+        }
+        return await self._call("AdditionalServiceGeneral", "save", props)
+
     async def download_registry_pdf(self, scan_sheet_ref: str) -> bytes:
         """Завантажує офіційний PDF-бланк реєстру (зі штрихкодом)."""
         url = NP_PRINT_URL.format(ref=scan_sheet_ref, key=self.api_key)
