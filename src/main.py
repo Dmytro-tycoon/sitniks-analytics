@@ -10,11 +10,9 @@ from src.config import settings
 async def main():
     scheduler = setup_scheduler()
     scheduler.start()
-    job = scheduler.get_job("daily_analysis")
-    print(f"Scheduler started. Next daily analysis: {job.next_run_time}")
-    ads_job = scheduler.get_job("daily_ads_report")
-    if ads_job:
-        print(f"Next daily ads report: {ads_job.next_run_time}")
+    print("Scheduler started. Jobs:")
+    for j in sorted(scheduler.get_jobs(), key=lambda x: x.id):
+        print(f"  - {j.id}: next {j.next_run_time}")
 
     # Web-сервер для Sitniks webhooks (в фоні)
     asyncio.create_task(run_web())
