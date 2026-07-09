@@ -256,12 +256,6 @@ class NovaPooshtaClient:
         - Зміна тільки телефону — без створення Counterparty.
         - Прибрати НП — поки не реалізовано.
         """
-        if remove_cod and not (new_phone or new_name):
-            raise NotImplementedError(
-                "Прибрати накладений платіж через платну заявку поки не підтримується. "
-                "Звернись в підтримку НП."
-            )
-
         # Тягнемо поточний стан, бо payload вимагає Recipient/PayerType/PaymentMethod
         check = await self._call("AdditionalService", "CheckPossibilityChangeEW", {
             "IntDocNumber": ttn_number,
@@ -275,8 +269,12 @@ class NovaPooshtaClient:
             "PayerType": cur.get("PayerType", "Recipient"),
             "PaymentMethod": cur.get("PaymentMethod", "Cash"),
             "BackwardDeliveryData": [],
-            "RecipientPhone": phone,
         }
+        if phone:
+            props["RecipientPhone"] = phone
+        if remove_cod:
+            # Прибирає накладений платіж: AfterpaymentOnGoodsCost=0 + BackwardDeliveryData=[]
+            props["AfterpaymentOnGoodsCost"] = 0
 
         if new_name:
             # Створюємо нового Counterparty (приватна особа, отримувач)
