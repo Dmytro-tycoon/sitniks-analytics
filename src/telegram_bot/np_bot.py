@@ -50,6 +50,7 @@ class RedirectFlow(StatesGroup):
     waiting_city = State()
     choosing_city = State()
     waiting_warehouse = State()
+    choosing_payment = State()
     confirming = State()
 
 
@@ -530,43 +531,73 @@ async def msg_redirect_warehouse(message: Message, state: FSMContext):
     wh = whs[0]
     wh_ref = wh.get("Ref", "")
     wh_desc = wh.get("Description", "")
+    await client.close()
 
-    # Робимо запит на розрахунок вартості
+    await state.update_data(warehouse_ref=wh_ref, warehouse_label=wh_desc)
+    await state.set_state(RedirectFlow.choosing_payment)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Відправник · безготівка", callback_data="np_rd_pay:sender")],
+        [InlineKeyboardButton(text="Отримувач · готівка", callback_data="np_rd_pay:recipient")],
+        [InlineKeyboardButton(text="❌ Скасувати", callback_data="np_rd:cancel")],
+    ])
+    await message.answer(
+        f"Відділення обрано: <b>{wh_desc}</b>\n\n"
+        f"Хто платить за переадресацію?",
+        reply_markup=kb,
+    )
+
+
+@np_dp.callback_query(RedirectFlow.choosing_payment, F.data.startswith("np_rd_pay:"))
+async def cb_redirect_payment(callback: CallbackQuery, state: FSMContext):
+    choice = callback.data.split(":")[1]
+    if choice == "sender":
+        payer_type, payment_method, label = "Sender", "NonCash", "з відправника, безготівка"
+    else:
+        payer_type, payment_method, label = "Recipient", "Cash", "з отримувача, готівка"
+
+    await callback.message.edit_reply_markup(reply_markup=None)
+    data = await state.get_data()
+    await state.update_data(payer_type=payer_type, payment_method=payment_method, pay_label=label)
+
+    # Рахуємо вартість з обраними параметрами
+    account = settings.NP_ACCOUNTS[data["account_index"]]
+    client = NovaPooshtaClient(account["key"])
+    cost = "?"
     try:
         pricing = await client.redirect_ttn(
             ttn_number=data["ttn"],
             city_ref=data["city_ref"],
-            warehouse_ref=wh_ref,
+            warehouse_ref=data["warehouse_ref"],
             recipient_ref=data["recipient_ref"],
             recipient_name=data["recipient_name"],
             recipient_phone=data["recipient_phone"],
+            payer_type=payer_type,
+            payment_method=payment_method,
             only_pricing=True,
         )
+        p_data = (pricing.get("data") or [{}])[0]
+        cost = p_data.get("Cost") or p_data.get("CostRedelivery") or "?"
     except Exception as e:
-        await message.answer(f"❌ Не вдалося порахувати: {e}")
-        await client.close()
-        return
+        await callback.message.answer(f"⚠️ Не вдалося порахувати вартість: {e}")
     finally:
         await client.close()
 
-    p_data = (pricing.get("data") or [{}])[0]
-    cost = p_data.get("Cost") or p_data.get("CostRedelivery") or "?"
-
-    await state.update_data(warehouse_ref=wh_ref, warehouse_label=wh_desc)
     await state.set_state(RedirectFlow.confirming)
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="✅ Створити заявку", callback_data="np_rd:confirm"),
         InlineKeyboardButton(text="❌ Скасувати", callback_data="np_rd:cancel"),
     ]])
-    await message.answer(
+    await callback.message.answer(
         f"📋 <b>Підсумок переадресації</b>\n\n"
         f"ТТН: <code>{data['ttn']}</code>\n"
         f"Отримувач: {data['recipient_name']} ({data['recipient_phone']})\n"
-        f"Нова адреса: {data['city_label']}, {wh_desc}\n"
-        f"Вартість: <b>{cost} грн</b> (з відправника, безготівка)\n\n"
+        f"Нова адреса: {data['city_label']}, {data['warehouse_label']}\n"
+        f"Оплата: <b>{label}</b>\n"
+        f"Вартість: <b>{cost} грн</b>\n\n"
         f"Створити заявку?",
         reply_markup=kb,
     )
+    await callback.answer()
 
 
 @np_dp.callback_query(RedirectFlow.confirming, F.data == "np_rd:confirm")
@@ -585,6 +616,8 @@ async def cb_redirect_confirm(callback: CallbackQuery, state: FSMContext):
             recipient_ref=data["recipient_ref"],
             recipient_name=data["recipient_name"],
             recipient_phone=data["recipient_phone"],
+            payer_type=data.get("payer_type", "Sender"),
+            payment_method=data.get("payment_method", "NonCash"),
             only_pricing=False,
         )
         d = (res.get("data") or [{}])[0]
