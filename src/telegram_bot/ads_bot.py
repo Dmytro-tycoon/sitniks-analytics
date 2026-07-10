@@ -130,6 +130,15 @@ async def send_daily_ads_report():
     except Exception as e:
         print(f"[ads_bot] daily report FAILED: {e}")
 
+    # Одразу пишемо в Google Sheet — уникаємо окремого cron-а, який
+    # конкурував з цим job-ом за Sitniks API rate-limit.
+    try:
+        from src.sheets.ads_sums import write_daily_sums_to_sheet
+        result = await write_daily_sums_to_sheet(target_date=date_from.date())
+        print(f"[ads_bot] Sheet updated: {result}")
+    except Exception as e:
+        print(f"[ads_bot] Sheet update FAILED: {e}")
+
 
 async def reattribute_yesterday(target_date: datetime = None, dry_run: bool = False) -> dict:
     """

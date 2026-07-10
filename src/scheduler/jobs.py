@@ -104,12 +104,9 @@ def setup_scheduler() -> AsyncIOScheduler:
         id="daily_hair_stats",
         replace_existing=True,
     )
-    scheduler.add_job(
-        daily_ads_sheet_job,
-        CronTrigger(hour=8, minute=45, timezone=KIEV_TZ),
-        id="daily_ads_sheet",
-        replace_existing=True,
-    )
+    # daily_ads_sheet_job більше НЕ окремим cron — write_daily_sums_to_sheet
+    # тепер викликається інлайн наприкінці send_daily_ads_report (08:30),
+    # щоб уникнути конкуренції за Sitniks API rate-limit.
     # Heartbeat: пише в лог кожні 30 хв — щоб бачити чи планувальник живий
     from apscheduler.triggers.interval import IntervalTrigger
     scheduler.add_job(
