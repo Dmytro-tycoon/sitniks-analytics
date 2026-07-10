@@ -64,12 +64,19 @@ async def daily_hair_stats_job():
         print(f"[{datetime.now()}] daily_hair_stats_job FAILED: {e}")
 
 
+async def scheduler_heartbeat():
+    """Друкує серцебиття кожні 30 хвилин — щоб бачити чи планувальник живий."""
+    print(f"[{datetime.now(KIEV_TZ).isoformat()}] scheduler heartbeat")
+
+
 def setup_scheduler() -> AsyncIOScheduler:
     # job_defaults: якщо job не запустився вчасно (deploy/restart) —
-    # apscheduler наздожене протягом 3 годин (misfire_grace_time=10800).
+    # apscheduler наздожене протягом 12 годин (misfire_grace_time=43200).
+    # Це важливо, бо на Railway event loop інколи "провисає" на кілька годин
+    # через паралельні Telegram polling-и, і job би пропускався зовсім.
     # coalesce=True: якщо пропущено кілька запусків — зробити лише один.
     job_defaults = {
-        "misfire_grace_time": 3 * 60 * 60,
+        "misfire_grace_time": 12 * 60 * 60,
         "coalesce": True,
     }
     scheduler = AsyncIOScheduler(timezone=KIEV_TZ, job_defaults=job_defaults)
@@ -101,6 +108,14 @@ def setup_scheduler() -> AsyncIOScheduler:
         daily_ads_sheet_job,
         CronTrigger(hour=8, minute=45, timezone=KIEV_TZ),
         id="daily_ads_sheet",
+        replace_existing=True,
+    )
+    # Heartbeat: пише в лог кожні 30 хв — щоб бачити чи планувальник живий
+    from apscheduler.triggers.interval import IntervalTrigger
+    scheduler.add_job(
+        scheduler_heartbeat,
+        IntervalTrigger(minutes=30),
+        id="heartbeat",
         replace_existing=True,
     )
     return scheduler
