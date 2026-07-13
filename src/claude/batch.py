@@ -44,7 +44,7 @@ class ClaudeBatchAnalyzer:
         batch = await self.client.messages.batches.create(requests=requests)
         return batch.id
 
-    async def wait_for_batch(self, batch_id: str, poll_interval: int = 30, max_wait: int = 3600) -> Dict:
+    async def wait_for_batch(self, batch_id: str, poll_interval: int = 30, max_wait: int = 14400) -> Dict:
         """Чекаємо завершення. Повертаємо {custom_id: normalized_result}."""
         elapsed = 0
         while elapsed < max_wait:
