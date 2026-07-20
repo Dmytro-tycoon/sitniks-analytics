@@ -62,6 +62,10 @@ class Settings:
         v = os.getenv("ADS_REPORT_CHAT_ID", "")
         return int(v) if v else None
 
+    # ── Stock / закупівлі bot ────────────────────────────────────────────────
+    @property
+    def STOCK_BOT_TOKEN(self): return os.getenv("STOCK_BOT_TOKEN", "")
+
     # ── Nova Poshta bot ──────────────────────────────────────────────────────
     @property
     def NP_BOT_TOKEN(self): return os.getenv("NP_BOT_TOKEN", "")
@@ -147,13 +151,60 @@ class Settings:
 
     @property
     def business_context(self) -> str:
-        """Бізнес-контекст з clients/<name>.context.md — підмішується в промпти."""
+        """Бізнес-контекст з clients/<name>.context.md — для АНАЛІТИКА (правила скорингу)."""
         return _load_client_context(self.client_name)
+
+    @property
+    def sales_context(self) -> str:
+        """Знання для ПРОДАВЦЯ з clients/<name>.sales.md (персона, процес, доставка).
+
+        Окремо від business_context: аналітичні правила скорингу лише заважають агенту
+        продавати. Fallback на business_context, якщо sales-файлу ще немає.
+        """
+        path = _root / "clients" / f"{self.client_name}.sales.md"
+        if path.exists():
+            return path.read_text(encoding="utf-8")
+        return self.business_context
+
+    @property
+    def price_cards(self) -> str:
+        """Картки товарів для відповіді на запит ціни (clients/<name>.price_cards.md).
+
+        Генерується scripts/mine_price_cards.py з реальних відповідей консультантів.
+        Формат: `## <ключ товару/реклами>` + тіло картки (назва, опис, ціни по об'ємах).
+        """
+        path = _root / "clients" / f"{self.client_name}.price_cards.md"
+        if path.exists():
+            return path.read_text(encoding="utf-8")
+        return ""
+
+    @property
+    def product_catalog(self) -> str:
+        """Топ-товари (ціни/об'єми/популярність) з clients/<name>.products.top.md.
+
+        Генерується scripts/build_product_kb.py із реальних замовлень Sitniks.
+        Іде у промпт продавця кешованим блоком, щоб агент не вигадував ціни.
+        """
+        path = _root / "clients" / f"{self.client_name}.products.top.md"
+        if path.exists():
+            return path.read_text(encoding="utf-8")
+        return ""
 
     # Sales bot (окремий автопілот, поки не використовується активно)
     @property
     def TELEGRAM_SALES_BOT_TOKEN(self):
         return os.getenv("TELEGRAM_SALES_BOT_TOKEN", "")
+
+    @property
+    def TELEGRAM_CONSULTANTS_CHAT_ID(self):
+        """Куди агент-консультант шле анкету передачі (група дівчат-консультантів).
+
+        Fallback на shadow (Дмитро), поки реальну групу не заведено.
+        """
+        v = os.getenv("TELEGRAM_CONSULTANTS_CHAT_ID", "")
+        if v:
+            return int(v)
+        return self.TELEGRAM_SHADOW_CHAT_ID or self.TELEGRAM_LEADERSHIP_CHAT_ID
 
 
 settings = Settings()

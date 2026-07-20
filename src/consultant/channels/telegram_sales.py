@@ -11,9 +11,10 @@ from aiogram import Bot, Dispatcher
 from aiogram.filters import Command
 from aiogram.types import Message
 
-from src.agent.engine import followup_message, respond
-from src.agent.memory import Conversation, store
-from src.agent.playbook import get_playbook
+from src.consultant.engine import followup_message, respond
+from src.consultant.handoff import deliver_handoff
+from src.consultant.memory import Conversation, store
+from src.consultant.playbook import get_playbook
 from src.config import settings
 
 dp = Dispatcher()
@@ -52,6 +53,9 @@ async def on_message(message: Message) -> None:
     if not message.text:
         return
     conv = store.get_or_create(str(message.from_user.id), "telegram")
+    # Уже передано живому консультанту — агент мовчить (веде людина)
+    if conv.status == "handoff":
+        return
     if conv.status != "active":
         conv.status = "active"  # клієнт повернувся — продовжуємо
     conv.add("client", message.text)
@@ -61,14 +65,19 @@ async def on_message(message: Message) -> None:
     conv.add("agent", reply)
     await message.answer(reply)
 
-    # Запланувати дожим, якщо клієнт замовкне
+    # Готова до підбору → передаємо консультанту (анкета в Telegram-групу)
+    if result.get("handoff"):
+        await deliver_handoff(
+            conv.lead_id, "telegram", result.get("handoff_summary") or "",
+            message.from_user.username,
+        )
+        return
+
+    # Запланувати дожим, якщо клієнтка замовкне
     if conv.status == "active" and conv.next_followup_hours > 0:
         asyncio.create_task(
             _followup_later(message.bot, message.chat.id, conv, conv.next_followup_hours, len(conv.turns))
         )
-
-    # Якщо клієнт готовий — тут створюємо замовлення в CRM (Sitniks /orders).
-    # Якщо escalate — тут пінгуємо керівника. (Підключається на бойовому каналі.)
 
 
 async def run() -> None:

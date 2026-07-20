@@ -2,6 +2,7 @@ import asyncio
 from src.telegram_bot.bot import bot, dp
 from src.telegram_bot.ads_bot import ads_bot, ads_dp
 from src.telegram_bot.np_bot import np_bot, np_dp
+from src.telegram_bot.stock_bot import stock_bot, stock_dp
 from src.scheduler.jobs import setup_scheduler
 from src.webhook_server import run_web
 from src.config import settings
@@ -24,6 +25,8 @@ async def main():
         tasks.append(ads_dp.start_polling(ads_bot))
     if settings.NP_BOT_TOKEN:
         tasks.append(np_dp.start_polling(np_bot))
+    if settings.STOCK_BOT_TOKEN:
+        tasks.append(stock_dp.start_polling(stock_bot))
     await asyncio.gather(*tasks)
 
 

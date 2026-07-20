@@ -241,12 +241,21 @@ class AdsSumsSheet:
 
 # ----- Публічна функція для cron -----
 
-async def write_daily_sums_to_sheet(target_date: Optional[date] = None) -> Dict:
+async def write_daily_sums_to_sheet(target_date: Optional[date] = None,
+                                     fallback_to_sitniks: bool = True) -> Dict:
     """
-    Викликається з cron-job. За замовчуванням пише за вчорашній день (Київ).
-    Групує ВСІ замовлення за день по adTitle (без exclude_reported, щоб не залежати від інших job-ів).
+    Пише суми по рекламах у Google Sheet за target_date.
+
+    Порядок:
+    1. Спробувати прочитати готові суми з reported_ad_orders (миттєво).
+       Якщо колонка sum_uah заповнена — використовуємо.
+    2. Якщо БД порожня для цього дня (нема записів) або суми nul —
+       fallback: build_ad_report з Sitniks (повільно, 5–10 хв).
+
+    Стара атрибуція (is_stale=true) додається до NO_AD_LABEL, як і раніше.
     """
-    from src.analyzer.ad_analytics import build_ad_report
+    from src.analyzer.ad_analytics import NO_AD_LABEL
+    from src.database.supabase_client import get_client
     from src.config import settings
 
     sheet_id = os.getenv("ADS_SHEET_ID") or getattr(settings, "ADS_SHEET_ID", "")
@@ -257,27 +266,54 @@ async def write_daily_sums_to_sheet(target_date: Optional[date] = None) -> Dict:
     if target_date is None:
         target_date = (datetime.now(KIEV_TZ) - timedelta(days=1)).date()
 
-    date_from = KIEV_TZ.localize(datetime(target_date.year, target_date.month, target_date.day, 0, 0, 0))
-    date_to = date_from + timedelta(days=1)
+    # 1. Спроба прочитати з БД
+    date_iso = target_date.isoformat()
+    res = get_client().table("reported_ad_orders") \
+        .select("ad_title, sum_uah, is_stale") \
+        .eq("order_date", date_iso) \
+        .execute()
+    db_rows = res.data or []
+    have_sums = any(r.get("sum_uah") is not None for r in db_rows)
 
-    from src.analyzer.ad_analytics import NO_AD_LABEL
+    sums: Dict[str, float] = {}
+    source = None
 
-    report = await build_ad_report(date_from, date_to)
-    sums = dict(report.get("sums", {}))
-
-    # За побажанням: суми зі "Старої атрибуції" (контакт з рекламою >30 днів
-    # до замовлення) — вважаємо еквівалентом прямих замовлень і додаємо
-    # до "Без реклами (прямі)".
-    stale_total_sum = float(report.get("stale_total_sum", 0) or 0)
-    if stale_total_sum:
-        sums[NO_AD_LABEL] = sums.get(NO_AD_LABEL, 0) + stale_total_sum
+    if db_rows and have_sums:
+        # Побудова сум з БД (миттєво)
+        stale_total = 0.0
+        for r in db_rows:
+            amount = float(r.get("sum_uah") or 0)
+            if r.get("is_stale"):
+                stale_total += amount
+            else:
+                title = r.get("ad_title") or NO_AD_LABEL
+                sums[title] = sums.get(title, 0) + amount
+        if stale_total:
+            sums[NO_AD_LABEL] = sums.get(NO_AD_LABEL, 0) + stale_total
+        source = f"db ({len(db_rows)} orders, {stale_total:.0f} stale merged)"
+        stale_added = stale_total
+    elif fallback_to_sitniks:
+        # 2. Fallback на Sitniks
+        from src.analyzer.ad_analytics import build_ad_report
+        date_from = KIEV_TZ.localize(datetime(target_date.year, target_date.month, target_date.day, 0, 0, 0))
+        date_to = date_from + timedelta(days=1)
+        report = await build_ad_report(date_from, date_to)
+        sums = dict(report.get("sums", {}))
+        stale_added = float(report.get("stale_total_sum", 0) or 0)
+        if stale_added:
+            sums[NO_AD_LABEL] = sums.get(NO_AD_LABEL, 0) + stale_added
+        source = "sitniks (db empty)"
+    else:
+        print(f"[ads_sheet] {target_date}: db empty and fallback disabled")
+        return {"skipped": True, "reason": "no data"}
 
     sheet = AdsSumsSheet(sheet_id)
     sheet.write_day(target_date, sums)
 
     return {
         "date": target_date.isoformat(),
+        "source": source,
         "ads_written": len(sums),
-        "total_sum": report.get("total_sum", 0) + stale_total_sum,
-        "stale_added_to_direct": stale_total_sum,
+        "total_sum": sum(sums.values()),
+        "stale_added_to_direct": stale_added,
     }

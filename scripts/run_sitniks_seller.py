@@ -6,7 +6,7 @@
 """
 import asyncio
 
-from src.channels.sitniks_seller import run
+from src.consultant.channels.sitniks_seller import run
 
 if __name__ == "__main__":
     asyncio.run(run())

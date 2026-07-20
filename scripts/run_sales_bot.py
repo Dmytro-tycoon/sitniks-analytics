@@ -7,7 +7,7 @@
 """
 import asyncio
 
-from src.channels.telegram_sales import run
+from src.consultant.channels.telegram_sales import run
 
 if __name__ == "__main__":
     asyncio.run(run())

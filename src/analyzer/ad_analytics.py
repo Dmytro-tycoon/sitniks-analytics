@@ -115,15 +115,20 @@ def mark_report_as_sent(report: Dict):
     rows = []
     for item in report.get("orders_resolved", []):
         # item: (order, title, ad_created)
-        order, title = item[0], item[1]
+        order, title, ad_created = item[0], item[1], item[2] if len(item) > 2 else None
         oid = order.get("id")
         if not oid:
             continue
+        amount = order.get("totalPriceDiscount")
+        if amount is None:
+            amount = order.get("totalPrice") or 0
         rows.append({
             "order_id": oid,
             "ad_title": title,
             "order_date": (order.get("createdAt") or "")[:10] or None,
             "chat_id": order.get("chatId"),
+            "sum_uah": float(amount or 0),
+            "is_stale": _is_stale(order.get("createdAt"), ad_created),
         })
     if rows:
         mark_orders_reported(rows)
