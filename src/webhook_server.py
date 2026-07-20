@@ -86,6 +86,9 @@ def make_app() -> web.Application:
     app = web.Application()
     app.router.add_post("/webhook/sitniks", handle_webhook)
     app.router.add_get("/", handle_health)
+    # LiqPay callback (ізольований пакет, реєструє /liqpay/callback + /liqpay/health)
+    from src.liqpay.callback import register_liqpay_routes
+    register_liqpay_routes(app)
     return app
 
 

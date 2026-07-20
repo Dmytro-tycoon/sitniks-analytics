@@ -92,6 +92,36 @@ class Settings:
         except Exception:
             return []
 
+    # ── LiqPay «Оплата частинами» bot ────────────────────────────────────────
+    @property
+    def LIQPAY_BOT_TOKEN(self): return os.getenv("LIQPAY_BOT_TOKEN", "")
+
+    @property
+    def LIQPAY_PUBLIC_KEY(self): return os.getenv("LIQPAY_PUBLIC_KEY", "")
+
+    @property
+    def LIQPAY_PRIVATE_KEY(self): return os.getenv("LIQPAY_PRIVATE_KEY", "")
+
+    @property
+    def LIQPAY_PAYTYPE(self):
+        # payparts | moment_part | "payparts,moment_part"
+        return os.getenv("LIQPAY_PAYTYPE", "payparts")
+
+    @property
+    def LIQPAY_RESULT_URL(self): return os.getenv("LIQPAY_RESULT_URL", "")
+
+    @property
+    def LIQPAY_SERVER_URL(self):
+        """Публічний https-URL callback. Напр.:
+        https://bot-production-71cc6.up.railway.app/liqpay/callback"""
+        return os.getenv("LIQPAY_SERVER_URL", "")
+
+    @property
+    def LIQPAY_OPERATOR_CHAT_IDS(self) -> list:
+        """chat_id операторів через кому. Порожній список = доступ усім."""
+        raw = os.getenv("LIQPAY_OPERATOR_CHAT_IDS", "")
+        return [int(x.strip()) for x in raw.split(",") if x.strip()]
+
 
     # ── Stats / Google Sheets ────────────────────────────────────────────────
     @property
