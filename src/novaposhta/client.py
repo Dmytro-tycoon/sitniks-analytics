@@ -178,6 +178,7 @@ class NovaPooshtaClient:
         new_phone: Optional[str] = None,
         new_name: Optional[str] = None,
         remove_cod: bool = False,
+        new_cod: Optional[float] = None,
     ) -> dict:
         """Редагує ТТН-чернетку через InternetDocument.update.
         Передаємо набір полів з поточної ТТН + замінюємо потрібні.
@@ -211,7 +212,15 @@ class NovaPooshtaClient:
             cod_val = float(str(cod_sum or 0))
         except (ValueError, TypeError):
             cod_val = 0
-        if cod_val > 0 and not remove_cod:
+        if new_cod is not None and new_cod > 0:
+            # Явно задана нова сума НП
+            props["BackwardDeliveryData"] = [{
+                "PayerType": "Recipient",
+                "CargoType": "Money",
+                "RedeliveryString": str(new_cod),
+            }]
+        elif cod_val > 0 and not remove_cod:
+            # Зберігаємо поточну суму НП
             props["BackwardDeliveryData"] = [{
                 "PayerType": "Recipient",
                 "CargoType": "Money",
@@ -246,6 +255,7 @@ class NovaPooshtaClient:
         new_phone: Optional[str] = None,
         new_name: Optional[str] = None,
         remove_cod: bool = False,
+        new_cod: Optional[float] = None,
         current_phone: Optional[str] = None,
     ) -> dict:
         """Платна заявка на зміну даних ТТН, що вже на складі.
@@ -275,6 +285,14 @@ class NovaPooshtaClient:
         if remove_cod:
             # Прибирає накладений платіж: AfterpaymentOnGoodsCost=0 + BackwardDeliveryData=[]
             props["AfterpaymentOnGoodsCost"] = 0
+        elif new_cod is not None and new_cod > 0:
+            # Змінює суму накладеного платежу
+            props["AfterpaymentOnGoodsCost"] = new_cod
+            props["BackwardDeliveryData"] = [{
+                "PayerType": "Recipient",
+                "CargoType": "Money",
+                "RedeliveryString": str(new_cod),
+            }]
 
         if new_name:
             # Створюємо нового Counterparty (приватна особа, отримувач)

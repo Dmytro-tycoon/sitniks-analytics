@@ -44,6 +44,7 @@ class EditFlow(StatesGroup):
     waiting_phone = State()
     waiting_name = State()
     confirming_cod_remove = State()
+    waiting_cod_amount = State()
 
 
 class RedirectFlow(StatesGroup):
@@ -226,6 +227,7 @@ def _edit_keyboard(is_draft: bool) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📱 Змінити телефон", callback_data="np_edit:phone")],
         [InlineKeyboardButton(text="👤 Змінити ПІБ", callback_data="np_edit:name")],
+        [InlineKeyboardButton(text="💰 Змінити суму НП", callback_data="np_edit:cod_amount")],
         [InlineKeyboardButton(text="💰 Прибрати накладений платіж", callback_data="np_edit:cod")],
         [InlineKeyboardButton(text="❌ Закрити", callback_data="np_edit:cancel")],
     ])
@@ -333,6 +335,30 @@ async def cb_edit_cod(callback: CallbackQuery, state: FSMContext):
     ]])
     await callback.message.answer("Точно прибрати накладений платіж?", reply_markup=kb)
     await callback.answer()
+
+
+@np_dp.callback_query(EditFlow.choosing_action, F.data == "np_edit:cod_amount")
+async def cb_edit_cod_amount(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await state.set_state(EditFlow.waiting_cod_amount)
+    await callback.message.answer(
+        "Введи нову суму накладеного платежу в гривнях (напр. <code>1500</code>):"
+    )
+    await callback.answer()
+
+
+@np_dp.message(EditFlow.waiting_cod_amount)
+async def msg_new_cod_amount(message: Message, state: FSMContext):
+    raw = (message.text or "").strip().replace(",", ".").replace(" ", "")
+    try:
+        amount = float(raw)
+    except ValueError:
+        await message.answer("❌ Введи число (напр. <code>1500</code>):")
+        return
+    if amount <= 0:
+        await message.answer("❌ Сума має бути більше 0. Щоб прибрати НП — використай кнопку «Прибрати накладений платіж».")
+        return
+    await _apply_change(message, state, new_cod=amount)
 
 
 async def _apply_change(message: Message, state: FSMContext, **changes):
