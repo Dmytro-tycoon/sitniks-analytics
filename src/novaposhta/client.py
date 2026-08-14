@@ -286,13 +286,8 @@ class NovaPooshtaClient:
             # Прибирає накладений платіж: AfterpaymentOnGoodsCost=0 + BackwardDeliveryData=[]
             props["AfterpaymentOnGoodsCost"] = 0
         elif new_cod is not None and new_cod > 0:
-            # Змінює суму накладеного платежу
-            props["AfterpaymentOnGoodsCost"] = new_cod
-            props["BackwardDeliveryData"] = [{
-                "PayerType": "Recipient",
-                "CargoType": "Money",
-                "RedeliveryString": str(new_cod),
-            }]
+            # Змінює суму: AfterpaymentOnGoodsCost як STRING, BackwardDeliveryData порожнє
+            props["AfterpaymentOnGoodsCost"] = str(int(new_cod)) if new_cod == int(new_cod) else str(new_cod)
 
         if new_name:
             # Створюємо нового Counterparty (приватна особа, отримувач)
