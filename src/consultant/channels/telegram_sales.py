@@ -14,6 +14,7 @@ from aiogram.types import Message
 from src.consultant.engine import followup_message, respond
 from src.consultant.handoff import deliver_handoff
 from src.consultant.memory import Conversation, store
+from src.consultant.pacing import reply_delay_seconds
 from src.consultant.playbook import get_playbook
 from src.config import settings
 
@@ -21,6 +22,20 @@ dp = Dispatcher()
 
 # Прискорення часу для пісочниці: 1 = реальні години, напр. 0.001 = тестовий режим.
 FOLLOWUP_TIME_SCALE = 1.0
+
+
+async def _type_then_send(bot: Bot, chat_id: int, text: str) -> None:
+    """Показати «друкує…» і після людської паузи надіслати повідомлення."""
+    remaining = reply_delay_seconds()
+    while remaining > 0:
+        try:
+            await bot.send_chat_action(chat_id, "typing")
+        except Exception:
+            pass
+        step = min(4.5, remaining)  # індикатор Telegram живе ~5 с — оновлюємо
+        await asyncio.sleep(step)
+        remaining -= step
+    await bot.send_message(chat_id, text)
 
 
 async def _followup_later(bot: Bot, chat_id: int, conv: Conversation, hours: float, marker: int) -> None:
@@ -33,7 +48,7 @@ async def _followup_later(bot: Bot, chat_id: int, conv: Conversation, hours: flo
     if not text:
         return
     conv.add("agent", text)
-    await bot.send_message(chat_id, text)
+    await _type_then_send(bot, chat_id, text)
     if conv.status == "active" and conv.next_followup_hours > 0:
         asyncio.create_task(_followup_later(bot, chat_id, conv, conv.next_followup_hours, len(conv.turns)))
 
@@ -61,17 +76,18 @@ async def on_message(message: Message) -> None:
     conv.add("client", message.text)
 
     result = await respond(conv, playbook=get_playbook())
-    reply = result.get("reply", "")
-    conv.add("agent", reply)
-    await message.answer(reply)
 
-    # Готова до підбору → передаємо консультанту (анкета в Telegram-групу)
+    # Передача — НЕПОМІТНА: клієнтці нічого не пишемо, просто передаємо консультанту
     if result.get("handoff"):
         await deliver_handoff(
             conv.lead_id, "telegram", result.get("handoff_summary") or "",
             message.from_user.username,
         )
         return
+
+    reply = result.get("reply", "")
+    conv.add("agent", reply)
+    await _type_then_send(message.bot, message.chat.id, reply)  # «людська» затримка + «друкує»
 
     # Запланувати дожим, якщо клієнтка замовкне
     if conv.status == "active" and conv.next_followup_hours > 0:

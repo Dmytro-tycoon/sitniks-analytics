@@ -4,6 +4,7 @@ from src.telegram_bot.ads_bot import ads_bot, ads_dp
 from src.telegram_bot.np_bot import np_bot, np_dp
 from src.telegram_bot.stock_bot import stock_bot, stock_dp
 from src.liqpay.bot import liqpay_bot, liqpay_dp
+from src.consultant.handoff_bot import handoff_bot, handoff_dp
 from src.scheduler.jobs import setup_scheduler
 from src.webhook_server import run_web
 from src.config import settings
@@ -30,6 +31,8 @@ async def main():
         tasks.append(stock_dp.start_polling(stock_bot))
     if settings.LIQPAY_BOT_TOKEN:
         tasks.append(liqpay_dp.start_polling(liqpay_bot))
+    if settings.HANDOFF_BOT_TOKEN:
+        tasks.append(handoff_dp.start_polling(handoff_bot))
     await asyncio.gather(*tasks)
 
 

@@ -226,6 +226,73 @@ class Settings:
         return os.getenv("TELEGRAM_SALES_BOT_TOKEN", "")
 
     @property
+    def AGENT_SOURCES(self) -> set[str]:
+        """Джерела чатів, які бере агент-консультант (initialSource, lower).
+
+        Зараз — тільки Facebook (TikTok-відправка через Open API дає 500 — Sitniks не вміє
+        слати в TikTok через API; питання до них). Розширити: AGENT_SOURCES="facebook,instagram".
+        """
+        raw = os.getenv("AGENT_SOURCES", "facebook")
+        return {s.strip().lower() for s in raw.split(",") if s.strip()}
+
+    @property
+    def AGENT_REPLY_DELAY_SECONDS(self) -> float:
+        """Затримка перед відповіддю агента — щоб діалог був схожий на живий (людина друкує).
+
+        ~15 с за замовчуванням (± випадковість у коді). Для швидкого тесту: AGENT_REPLY_DELAY_SECONDS=0.
+        """
+        try:
+            return float(os.getenv("AGENT_REPLY_DELAY_SECONDS", "15"))
+        except ValueError:
+            return 15.0
+
+    @property
+    def AGENT_NEW_STATUSES(self) -> set[str]:
+        """Статуси чату, які вважаємо «новий» — тільки їх бере бот (lower).
+
+        Інші статуси → дівчатам, як раніше. Sitniks віддає «Новый» (рос.).
+        """
+        raw = os.getenv("AGENT_NEW_STATUSES", "Новый,Новій,Новий,New")
+        return {s.strip().lower() for s in raw.split(",") if s.strip()}
+
+    @property
+    def AGENT_WORKING_STATUS(self) -> str:
+        """Статус, який бот ставить, БЕРУЧИ чат у роботу (видно дівчатам у мобільному)."""
+        return os.getenv("AGENT_WORKING_STATUS", "🤖 В обробці Агентом")
+
+    @property
+    def AGENT_HANDOFF_STATUS(self) -> str:
+        """Статус, який бот ставить, ПЕРЕДАЮЧИ чат дівчатам (вони розбирають по ньому)."""
+        return os.getenv("AGENT_HANDOFF_STATUS", "🔥 Гарячий лід від Агента")
+
+    @property
+    def HANDOFF_TELEGRAM(self) -> bool:
+        """Чи слати анкету-резюме в Telegram при передачі (окрім зміни статусу в Sitniks).
+
+        За замовч. ВИМКНЕНО — передача тільки статусом, контекст дівчина бачить у діалозі.
+        Увімкнути: HANDOFF_TELEGRAM=1.
+        """
+        return os.getenv("HANDOFF_TELEGRAM", "0").strip().lower() in ("1", "true", "yes", "on")
+
+    @property
+    def HANDOFF_BOT_TOKEN(self):
+        """Токен окремого Telegram-бота для дівчат-консультантів (анкети + лінки на діалоги)."""
+        return os.getenv("HANDOFF_BOT_TOKEN", "")
+
+    @property
+    def SHADOW_BOT_TOKEN(self):
+        """Токен Telegram-бота для Shadow Mode (чернетки на підтвердження Дмитру)."""
+        return os.getenv("SHADOW_BOT_TOKEN", "")
+
+    @property
+    def SHADOW_MODE(self) -> bool:
+        """Shadow Mode: бот НЕ шле клієнтці сам, а спершу питає підтвердження в Telegram.
+
+        За замовч. УВІМКНЕНО (безпечний режим тестування). Вимкнути (авто-відправка): SHADOW_MODE=0.
+        """
+        return os.getenv("SHADOW_MODE", "1").strip().lower() in ("1", "true", "yes", "on")
+
+    @property
     def TELEGRAM_CONSULTANTS_CHAT_ID(self):
         """Куди агент-консультант шле анкету передачі (група дівчат-консультантів).
 

@@ -25,8 +25,9 @@ PRICE_RE = re.compile(
     r"цен[аыу]|стоимост|прайс|price)",
     re.IGNORECASE,
 )
-# У справжній картці — кілька рядків «об'єм - ціна»
+# Ціни в картці: кілька рядків «об'єм - ціна» АБО хоча б одна ціна «X грн» (для наборів/Set)
 VOL_PRICE_RE = re.compile(r"\d+\s*мл\s*[-–—]\s*\d+", re.IGNORECASE)
+PRICE_TOKEN_RE = re.compile(r"\d+\s*(грн|₴)", re.IGNORECASE)
 GREETING_RE = re.compile(r"^.*на зв.?язку.*$", re.IGNORECASE | re.MULTILINE)
 
 # Токени, що вказують на рядок-назву товару (для витягування ключа)
@@ -34,6 +35,7 @@ _PRODUCT_TOKENS = (
     "крем", "тонер", "гель", "сироват", "маска", "пудр", "спф", "spf", "cream",
     "usolab", "smart4derma", "ag skin", "bio ", "флюїд", "олія", "пілінг", "ретинол",
     "вітамін", "емульс", "міцеляр", "молочко", "бальзам", "шампун",
+    "набір", "набор", "комплекс", "set", "vita", "ion",  # для наборів (Vita Ion-C Set)
 )
 
 
@@ -42,14 +44,21 @@ def _product_key(body: str, ad: str) -> str:
     if ad:
         return ad.strip()
     for ln in body.splitlines():
-        s = ln.strip(" 🧴✨🔥🟢☀️▪️✅•✔️️⬇➡️🌟")
-        if not (8 <= len(s) <= 70) or s.endswith("?"):
+        s = ln.strip(" 🧴✨🔥🟢☀️☀▪️✅•✔️️⬇➡️🌟💰")
+        if not (8 <= len(s) <= 90) or s.endswith("?"):
             continue
         low = s.lower()
         upper_ratio = sum(1 for ch in s if ch.isupper()) / max(len(s), 1)
         if upper_ratio > 0.4 or any(t in low for t in _PRODUCT_TOKENS):
             return s
     return ""
+
+
+def _is_card_like(reply: str) -> bool:
+    """Чи це повноцінна картка: ≥2 рядки «об'єм-ціна» АБО є ціна «X грн» + достатньо змісту."""
+    if len(VOL_PRICE_RE.findall(reply)) >= 2:
+        return True
+    return bool(PRICE_TOKEN_RE.search(reply)) and len(reply) >= 150
 
 
 def _is_client(m: dict) -> bool:
@@ -77,8 +86,7 @@ def _first_price_card(messages: list[dict]) -> tuple[str, str] | None:
             if _text(nxt):
                 parts.append(_text(nxt))
         reply = "\n".join(parts)
-        # справжня картка = ≥2 рядки «об'єм - ціна» (розпив + оригінал тощо)
-        if len(VOL_PRICE_RE.findall(reply)) < 2:
+        if not _is_card_like(reply):
             continue
         ad = (m.get("adInfo") or {}).get("adTitle") or ""
         body = _strip_greeting(reply)
@@ -89,35 +97,69 @@ def _first_price_card(messages: list[dict]) -> tuple[str, str] | None:
     return None
 
 
+def _load_existing_cards() -> dict[str, str]:
+    """Читає наявний price_cards.md → {ключ: тіло}, щоб доповнювати, а не перезаписувати."""
+    path = _ROOT / "clients" / "skin_one.price_cards.md"
+    if not path.exists():
+        return {}
+    cards: dict[str, str] = {}
+    key, body = None, []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("## "):
+            if key is not None:
+                cards[key] = "\n".join(body).strip()
+            key, body = line[3:].strip(), []
+        elif key is not None:
+            body.append(line)
+    if key is not None:
+        cards[key] = "\n".join(body).strip()
+    return cards
+
+
 async def main() -> None:
     days = int(sys.argv[1]) if len(sys.argv) > 1 else 60
     max_chats = int(sys.argv[2]) if len(sys.argv) > 2 else 400
 
     client = SitniksClient()
     now = datetime.now()
-    chats = await client.get_all_chats(now - timedelta(days=days), now)
-    print(f"Чатів за {days} днів: {len(chats)} · скануємо до {max_chats}", flush=True)
+    date_from = now - timedelta(days=days)
+    # тягнемо лише потрібну кількість чатів (не весь період — це швидше й надійніше)
+    chats: list[dict] = []
+    skip = 0
+    while len(chats) < max_chats:
+        data = await client.get_chats(date_from, now, limit=50, skip=skip)
+        batch = data.get("data", [])
+        if not batch:
+            break
+        chats.extend(batch)
+        skip += 50
+    chats = chats[:max_chats]
+    print(f"Взято чатів: {len(chats)} · скануємо", flush=True)
 
-    # по кожному ключу лишаємо найповнішу (найдовшу) картку
-    cards: dict[str, str] = {}
-    scanned = 0
-    for c in chats[:max_chats]:
-        scanned += 1
-        try:
-            msgs = await client.get_chat_messages(c["id"])
-        except Exception:
-            continue
-        found = _first_price_card(msgs)
+    # ДОДАВАЛЬНО: стартуємо з наявних карток, щоб вузьке вікно нічого не загубило
+    cards: dict[str, str] = _load_existing_cards()
+    print(f"У бібліотеці вже: {len(cards)} карток (мерджимо нові)", flush=True)
+    sem = asyncio.Semaphore(5)
+
+    async def _scan(c) -> tuple[str, str] | None:
+        async with sem:
+            try:
+                msgs = await client.get_chat_messages(c["id"])
+            except Exception:
+                return None
+        return _first_price_card(msgs)
+
+    results = await asyncio.gather(*[_scan(c) for c in chats])
+    await client.close()
+
+    for found in results:
         if not found:
             continue
         key, body = found
         if key and (key not in cards or len(body) > len(cards[key])):
             cards[key] = body
-        if scanned % 50 == 0:
-            print(f"  ...проскановано {scanned}, карток {len(cards)}", flush=True)
-    await client.close()
 
-    print(f"Проскановано: {scanned} · унікальних карток: {len(cards)}", flush=True)
+    print(f"Проскановано: {len(chats)} · унікальних карток: {len(cards)}", flush=True)
 
     # Пишемо бібліотеку, відсортовану за повнотою картки
     out = [

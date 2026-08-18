@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from src.consultant.guardrails import next_followup_hours, should_escalate
 from src.consultant.memory import Conversation
-from src.consultant.pricecards import find_card, is_price_question
+from src.consultant.pricecards import find_card
 from src.consultant.prompts import (
     FOLLOWUP_PROMPT,
     QUALIFIER_SYSTEM_PROMPT,
@@ -38,10 +38,15 @@ async def respond(conv: Conversation, playbook: str = "", ad_title: str | None =
             "followup_hours": 0,
         }
 
-    # На запит ціни підтягуємо картку потрібного товару (як відповідають дівчата)
+    # Підтягуємо картку товару, щойно він визначений — з реклами АБО з тексту клієнтки
+    # (назвала/описала засіб). Важливо для TikTok, де реклами (adInfo) немає й товар
+    # упізнається лише з тексту. Суворий матчер не дає хибних збігів; шукаємо по кількох
+    # останніх репліках, поки картку ще не видали (щоб не дублювати).
     price_card = ""
-    if is_price_question(last) or ad_title:
-        price_card = find_card(ad_title, last)
+    if not conv.price_card_sent:
+        price_card = find_card(ad_title, conv.recent_client_text())
+        if price_card:
+            conv.price_card_sent = True
 
     system = QUALIFIER_SYSTEM_PROMPT.format(
         niche=settings.niche or "професійної косметики",

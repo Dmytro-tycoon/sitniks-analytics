@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 
 import httpx
@@ -17,7 +18,7 @@ import httpx
 from src.config import settings
 from src.crm.base import Dialog, Message
 
-PAGE = 100  # розмір сторінки пагінації (limit/skip)
+PAGE = 50  # розмір сторінки пагінації (limit/skip). Sitniks: max limit для /messages = 50
 
 # Значення sentBy, що означають "це писав менеджер/компанія, а не клієнт".
 _MANAGER_SENDERS = {"manager", "operator", "company", "bot", "out", "outgoing"}
@@ -40,12 +41,32 @@ class SitniksConnector:
             },
         )
 
-    async def get_dialogs(self, date_from: datetime, date_to: datetime) -> list[Dialog]:
-        """Усі чати за період + їхні повідомлення, у нормалізованому вигляді."""
+    async def _get(self, url: str, params: dict | None = None) -> dict:
+        """GET з retry на 429 (експоненційний backoff) — щоб поллер не падав на rate-limit."""
+        backoff = 2
+        for attempt in range(6):
+            resp = await self.client.get(url, params=params)
+            if resp.status_code == 429:
+                if attempt == 5:
+                    resp.raise_for_status()
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 30)
+                continue
+            resp.raise_for_status()
+            return resp.json()
+        return {}
+
+    async def get_dialogs(self, date_from: datetime, date_to: datetime, chat_filter=None) -> list[Dialog]:
+        """Чати за період + їхні повідомлення, у нормалізованому вигляді.
+
+        chat_filter(chat_dict) -> bool: якщо задано, повідомлення тягнемо ТІЛЬКИ для чатів,
+        що проходять фільтр (напр. tiktok+новий). Це різко зменшує кількість запитів і 429."""
         chats = await self._get_all_chats(date_from, date_to)
         dialogs: list[Dialog] = []
         for c in chats:
-            messages = await self._get_chat_messages(c["id"])
+            if chat_filter is not None and not chat_filter(c):
+                continue
+            messages = await self._get_chat_messages(c["id"], client_id=c.get("userId"))
             dialogs.append(
                 Dialog(
                     id=str(c["id"]),
@@ -62,7 +83,7 @@ class SitniksConnector:
         out: list[dict] = []
         skip = 0
         while True:
-            resp = await self.client.get(
+            data = await self._get(
                 f"{self.base_url}/chats",
                 params={
                     "startDate": date_from.isoformat(),
@@ -71,28 +92,26 @@ class SitniksConnector:
                     "skip": skip,
                 },
             )
-            resp.raise_for_status()
-            batch = resp.json().get("data", [])
+            batch = data.get("data", [])
             out.extend(batch)
             if len(batch) < PAGE:
                 break
             skip += PAGE
         return out
 
-    async def _get_chat_messages(self, chat_id: str) -> list[Message]:
+    async def _get_chat_messages(self, chat_id: str, client_id: str | None = None) -> list[Message]:
         out: list[Message] = []
         skip = 0
         while True:
-            resp = await self.client.get(
+            data = await self._get(
                 f"{self.base_url}/chats/{chat_id}/messages",
                 params={"limit": PAGE, "skip": skip},
             )
-            resp.raise_for_status()
-            batch = resp.json().get("data", [])
+            batch = data.get("data", [])
             for m in batch:
                 out.append(
                     Message(
-                        sender=self._sender_of(m),
+                        sender=self._sender_of(m, client_id),
                         text=m.get("text", "") or "",
                         timestamp=_parse_dt(m.get("createdAt")),
                         author_name=m.get("managerName", "") or "",
@@ -106,11 +125,19 @@ class SitniksConnector:
         return out
 
     @staticmethod
-    def _sender_of(m: dict) -> str:
-        """Менеджер чи клієнт. Надійний сигнал — заповнений managerName."""
+    def _sender_of(m: dict, client_id: str | None = None) -> str:
+        """Клієнт чи менеджер.
+
+        Найнадійніший сигнал — `sentBy == chat.userId` (акаунт клієнта): усе інше (owner
+        компанії, менеджер, бот) → manager. Це коректно й тоді, коли managerName порожній
+        (напр. картки/автовідповіді в TikTok/Instagram). Запасні сигнали — managerName і sentBy.
+        """
+        sent_by = (m.get("sentBy") or "").strip()
+        if client_id and sent_by:
+            return "client" if sent_by == client_id else "manager"
         if (m.get("managerName") or "").strip():
             return "manager"
-        if (m.get("sentBy") or "").lower() in _MANAGER_SENDERS:
+        if sent_by.lower() in _MANAGER_SENDERS:
             return "manager"
         return "client"
 

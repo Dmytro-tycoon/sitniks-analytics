@@ -20,9 +20,15 @@ class Conversation:
     channel: str                       # "telegram" | "instagram" | "sitniks"
     turns: list[Turn] = field(default_factory=list)
     stage: str = "contact"
-    status: str = "active"             # active | won | lost | escalated
+    status: str = "active"             # active | handoff | escalated | lost
     followups_sent: int = 0
     next_followup_hours: float = 0.0   # коли наступне нагадування (0 = не заплановано)
+    price_card_sent: bool = False      # картку ціни вже видали (щоб не дублювати)
+
+    def recent_client_text(self, n: int = 3) -> str:
+        """Останні n реплік клієнта — щоб ловити товар, названий після «Ціна?»."""
+        clients = [t.text for t in self.turns if t.role == "client"]
+        return " ".join(clients[-n:])
 
     def add(self, role: str, text: str) -> None:
         self.turns.append(Turn(role, text))

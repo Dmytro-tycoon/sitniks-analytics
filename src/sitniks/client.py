@@ -92,9 +92,8 @@ class SitniksClient:
         Returns:
             створене повідомлення (той же формат що GET .../messages).
         """
-        body: Dict = {"text": text}
-        if attachments:
-            body["attachments"] = attachments
+        # attachments завжди присутнє (навіть []) — інакше Sitniks може віддати 500
+        body: Dict = {"text": text, "attachments": attachments or []}
         return await self._post_with_retry(
             f"{self.base_url}/chats/{chat_id}/messages",
             json_body=body,
@@ -178,7 +177,7 @@ class SitniksClient:
             return None
 
     async def update_chat_tags(self, chat_id: str, tags: List[str]) -> Dict:
-        """PUT /chats/{id} — оновити теги чату (єдине доступне через Open API поле)."""
+        """PUT /chats/{id} — оновити теги чату."""
         response = await self.client.put(
             f"{self.base_url}/chats/{chat_id}",
             headers=self.headers,
@@ -186,6 +185,21 @@ class SitniksClient:
         )
         response.raise_for_status()
         return response.json()
+
+    async def set_chat_status(self, chat_id: str, status: str) -> Dict:
+        """PATCH /chats/{id}/status — змінити статус чату (напр. «🔥 Гарячий лід від Агента»).
+
+        Статус передається назвою (рядком)."""
+        response = await self.client.patch(
+            f"{self.base_url}/chats/{chat_id}/status",
+            headers=self.headers,
+            json={"status": status},
+        )
+        response.raise_for_status()
+        try:
+            return response.json()
+        except Exception:
+            return {}  # Sitniks може повертати порожнє тіло на успішний PATCH
 
     async def close(self):
         await self.client.aclose()

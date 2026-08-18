@@ -22,8 +22,38 @@ def is_price_question(text: str) -> bool:
     return bool(PRICE_QUESTION_RE.search(text or ""))
 
 
-def _tokens(s: str) -> set[str]:
-    return {t for t in re.findall(r"\w+", (s or "").lower()) if len(t) > 3}
+# Загальні слова-категорії — самі по собі НЕ визначають конкретний товар (за 4-літерною основою).
+# Напр. «кремчик»/«крем»/«крему» → основа «крем» → не даємо впевненого збігу, краще перепитати.
+_GENERIC_STEMS = {
+    "крем", "гель", "тоне", "сиро", "засі", "засо", "маск", "пудр", "флюї",
+    "олій", "догл", "прод", "това", "баль", "моло", "міце", "емул",
+}
+
+
+def _tokens(s: str) -> list[str]:
+    return [t for t in re.findall(r"\w+", (s or "").lower()) if len(t) > 3]
+
+
+def _is_generic(word: str) -> bool:
+    return word[:4] in _GENERIC_STEMS
+
+
+def _stem_match(a: str, b: str) -> bool:
+    """Стійке до українських відмінків порівняння: «вітамін» ~ «вітаміном» (спільна основа)."""
+    if a == b:
+        return True
+    if len(a) >= 4 and len(b) >= 4:
+        return a.startswith(b[:4]) or b.startswith(a[:4])
+    return False
+
+
+def _overlap(query: list[str], target: list[str]) -> int:
+    """Скільки унікальних слів запиту мають збіг (за основою) у цільовому наборі."""
+    cnt = 0
+    for q in set(query):
+        if any(_stem_match(q, t) for t in target):
+            cnt += 1
+    return cnt
 
 
 def _parse_cards() -> list[tuple[str, str]]:
@@ -63,21 +93,24 @@ def find_card(ad_title: str | None = None, text: str | None = None) -> str:
         qa = _tokens(ad_title)
         best, best_score = "", 0
         for key, body in cards:
-            score = len(qa & _tokens(key))
+            score = _overlap(qa, _tokens(key))
             if score > best_score:
                 best, best_score = body, score
         if best_score >= 2:
             return best
 
-    # 2) збіг за текстом клієнтки (назвала товар)
+    # 2) збіг за текстом клієнтки (назвала товар) — стійко до відмінків
     if text:
         qt = _tokens(text)
-        best, best_score = "", 0
+        best, best_matched = "", []
         for key, body in cards:
-            score = len(qt & (_tokens(key) | _tokens(body[:200])))
-            if score > best_score:
-                best, best_score = body, score
-        if best_score >= 2:
+            tgt = _tokens(key) + _tokens(body[:200])
+            matched = [q for q in set(qt) if any(_stem_match(q, t) for t in tgt)]
+            if len(matched) > len(best_matched):
+                best, best_matched = body, matched
+        # Впевнений збіг: 2 будь-яких слова АБО 1 довге ХАРАКТЕРНЕ (не загальне «крем/гель»)
+        strong = [m for m in best_matched if len(m) >= 6 and not _is_generic(m)]
+        if len(best_matched) >= 2 or strong:
             return best
 
     return ""

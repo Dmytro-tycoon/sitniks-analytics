@@ -1,6 +1,6 @@
 # Sitniks Analytics — контекст сесії
 
-> Документ описує стан системи аналітики менеджерів станом на 13.07.2026.
+> Документ описує стан системи аналітики менеджерів станом на 20.07.2026.
 > Призначений для швидкого відновлення контексту при наступному запуску роботи.
 
 ---
@@ -92,7 +92,9 @@ src/
     playbook.py             # тон+прийоми кваліфікації з tone_of_voice (qualify_only)
     prompts.py              # QUALIFIER_SYSTEM_PROMPT + FOLLOWUP_PROMPT
     pricecards.py           # пошук картки товару на запит «Ціна?» (find_card)
-    handoff.py              # передача живому консультанту (Telegram-анкета + тег Sitniks)
+    handoff.py              # передача дівчатам: статус «🔥 Гарячий лід» (+ опц. Telegram)
+    handoff_bot.py          # окремий Telegram-бот для дівчат (анкети) — HANDOFF_BOT_TOKEN
+    shadow.py               # Shadow Mode: чернетки Дмитру з кнопками ✅/✏️/❌ — SHADOW_BOT_TOKEN
     channels/               # канали доставки агента (НЕ запускаються в main)
       sitniks_seller.py     # полінг чатів Sitniks
       telegram_sales.py     # окремий Telegram-бот (пісочниця/бій)
@@ -261,9 +263,17 @@ Body: `{ "text": string, "attachments": [string]? }` → Response 201 + ство
 
 Ще не почато. Користувач сказав "трохи пізніше повернемось".
 
+**Зміна статусу чату — Є в API:** `PATCH /open-api/chats/{chatId}/status` з body `{"status": "<назва>"}`
+(статус — рядком). Перевірено оборотним тестом (`scripts/test_status_change.py`). Реалізовано в
+`SitniksClient.set_chat_status()`. `PUT /chats/{id}` статус ІГНОРУЄ (пише лише `tags`); окремий
+`PATCH .../status` — саме те. Використовується агентом-консультантом для claiming/handoff (див. §9).
+
+**Нотатки:** `POST /chats/{id}/notes` (тіло `{"text": ...}`) — але нашому Open API токену
+**заборонено** (403 `forbidden_resource`). Треба просити Sitniks дати доступ. Поки що резюме
+передачі йде в Telegram (опційно, `HANDOFF_TELEGRAM`), а контекст дівчина бачить у самому діалозі.
+
 **Що поки НЕ дав Sitniks:**
 - `assignedManagerId` у `PUT /chats/{id}` (для автопризначення спам-чатів на керівника).
-  У листі-запиті цей пункт прибрали, щоб не розпорошувати увагу.
 
 ---
 
@@ -285,6 +295,8 @@ Body: `{ "text": string, "attachments": [string]? }` → Response 201 + ство
 
 | Дата | Баг | Виправлення |
 |---|---|---|
+| **20.07** | Заміна токена `@managers_analytics_bot` — оновили тільки локальний `.env`, а Railway залишався зі старим (ризик `Unauthorized` якщо старий revoke) | Прочитали `TELEGRAM_BOT_TOKEN` з локального `.env` → `variableUpsert` у Railway → `serviceInstanceRedeploy`. Логи підтверджують: `bot id = 8980913214` (той самий бот), без `Unauthorized`, webhook приймає події. Локальний `.env` і Railway тепер синхронізовані. |
+| 22.07 | Конектор плутав клієнта/менеджера в TikTok (та ін.): `managerName` часто порожній, і менеджерські картки/розсилки зараховувались клієнту → агент «відповідав» на власні повідомлення | `_sender_of` тепер: `sentBy == chat.userId` → клієнт, інакше → менеджер (`src/crm/sitniks.py`, той самий фікс у `replay_dialogs.py`). Джерело `initialSource` — надійне (900/900). TikTok часто ініціює компанія («Ви питали ціну в коментарях»). |
 | 08.06 | Spam webhook блок TELEGRAM SEND був під `else` — сповіщення на НЕ спам | Перенесено під `if is_spam:` |
 | 05.06 | `get_chat_messages` віддавав тільки 10 з 75+ | Пагінація limit=50, скіп, сортування |
 | 05.06 | Sitniks 429 rate-limit при daily-job | Retry exp backoff в `_get_with_retry` + concurrency=2 |
@@ -366,7 +378,16 @@ curl -s -X POST https://backboard.railway.com/graphql/v2 \
 | `TELEGRAM_MANAGERS` | JSON 4 менеджерів |
 | `TELEGRAM_SHADOW_CHAT_ID` | `448547265` (Dmitriy) — поки активно, звіти йдуть тобі |
 | `TELEGRAM_SALES_BOT_TOKEN` | (окремий бот для пісочниці агента-консультанта) |
+| `HANDOFF_BOT_TOKEN` | окремий Telegram-бот для дівчат (анкети + лінки); без нього — fallback на основний бот |
 | `TELEGRAM_CONSULTANTS_CHAT_ID` | група дівчат-консультантів для анкет передачі (fallback → shadow/Дмитро) |
+| `AGENT_SOURCES` | джерела, які бере бот (default `tiktok,facebook`); розширити: `tiktok,facebook,instagram` |
+| `AGENT_NEW_STATUSES` | статуси «новий», які бере бот (default `Новый,Новій,Новий,New`) |
+| `AGENT_WORKING_STATUS` | статус при взятті чату (default `🤖 В обробці Агентом`) — claiming, видно дівчатам |
+| `AGENT_HANDOFF_STATUS` | статус при передачі (default `🔥 Гарячий лід від Агента`) — дівчата розбирають по ньому |
+| `HANDOFF_TELEGRAM` | слати анкету-резюме в Telegram при передачі (default `0` = лише статус + історія чату; `1` = ще й Telegram) |
+| `SHADOW_MODE` | Shadow Mode: чернетка на підтвердження перед відправкою клієнтці (default `1`; `0` = авто-відправка) |
+| `SHADOW_BOT_TOKEN` | окремий Telegram-бот для Shadow Mode (кнопки ✅/✏️/❌ Дмитру). Без нього поллер не стартує в Shadow |
+| `AGENT_REPLY_DELAY_SECONDS` | «людська» затримка перед відповіддю (default `15`, ±30% у коді; `0` = вимкнути) |
 | `SUPABASE_URL` | `https://igkemadfxebmcetxvhwx.supabase.co` |
 | `SUPABASE_SERVICE_KEY` | див. локальний `.env` |
 | `ANALYSIS_TIMEZONE` | `Europe/Kiev` |
@@ -391,4 +412,4 @@ Railway Token, GitHub PAT, Anthropic key, Sitniks key, Bot tokens — тільк
 
 ---
 
-**Останнє оновлення:** 13.07.2026 — виправлено таймаут batch (1h → 4h), Sitniks додав send_message API, створено окремий приватний репо `sales-agent`, інтегровано sales-agent модулі у наш проект (11 нових команд), готово до Shadow Mode тестування автовідповідей.
+**Останнє оновлення:** 20.07.2026 — заміна токена `@managers_analytics_bot`, синхронізація локального `.env` і Railway Variables (bot_id `8980913214` збережено — той самий бот, новий secret). Раніше (13.07): виправлено таймаут batch (1h → 4h), Sitniks додав send_message API, створено окремий приватний репо `sales-agent`, інтегровано sales-agent модулі у наш проект (11 нових команд), готово до Shadow Mode тестування автовідповідей.
