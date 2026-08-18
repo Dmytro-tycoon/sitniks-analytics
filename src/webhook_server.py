@@ -11,6 +11,16 @@ SPAM_TAG = "🚫 SPAM"
 # Дедуплікація сповіщень про спам — щоб не спамити Telegram при кожному повідомленні
 _NOTIFIED_SPAM_CHATS: set[str] = set()
 
+# ── Автовітання gift-воронки (Telegram-канал SKIN.ONE) ──────────────────────────
+# initialSource нашого бот-каналу в Sitniks (перевірено на живому чаті).
+GIFT_SOURCE = "telegram_bot"
+GIFT_WELCOME_TEXT = (
+    'Вітаємо! 🎁 Напишіть у відповідь „Хочу подарунок" — '
+    'і наш спеціаліст незабаром приєднається до розмови. 😊'
+)
+# Дедуплікація автовітання — один раз на чат (у межах життя процесу).
+_WELCOMED_CHATS: set[str] = set()
+
 
 async def handle_webhook(request: web.Request) -> web.Response:
     try:
@@ -69,6 +79,34 @@ async def handle_webhook(request: web.Request) -> web.Response:
                     print(f"[webhook] tg notify failed: {e}", flush=True)
         else:
             print(f"[webhook] ✓ not spam: {chat.get('userName')} (@{chat.get('userNickName')})", flush=True)
+
+        # ── Автовітання для Telegram gift-воронки ───────────────────────────────
+        # Шлемо один раз на чат, тільки для нашого бот-каналу і поки менеджер ще
+        # не відповів. Наша ж відповідь іде як повідомлення менеджера, але dedup-
+        # множина гарантує, що вітання не спрацює вдруге (захист від зациклення).
+        if (
+            not is_spam
+            and chat.get("initialSource") == GIFT_SOURCE
+            and chat_id not in _WELCOMED_CHATS
+        ):
+            try:
+                msgs = await sc.get_chat_messages(chat_id)
+                # Менеджерські повідомлення мають непорожній managerName; наше ж
+                # автовітання йде з порожнім managerName (sentBy = id бота), тому
+                # додатково перевіряємо, чи текст вітання вже є в чаті — це переживає
+                # рестарт процесу (коли _WELCOMED_CHATS порожня).
+                manager_replied = any((m.get("managerName") or "").strip() for m in msgs)
+                already_welcomed = any((m.get("text") or "") == GIFT_WELCOME_TEXT for m in msgs)
+                if not manager_replied and not already_welcomed:
+                    await sc.send_message(chat_id, GIFT_WELCOME_TEXT)
+                    print(f"[webhook] 🎁 welcome sent to telegram chat {chat_id}", flush=True)
+                else:
+                    print(f"[webhook] 🎁 skip welcome (manager_replied={manager_replied}, already={already_welcomed}) {chat_id}", flush=True)
+                _WELCOMED_CHATS.add(chat_id)
+                if len(_WELCOMED_CHATS) > 10000:
+                    _WELCOMED_CHATS.clear()
+            except Exception as e:
+                print(f"[webhook] welcome failed for {chat_id}: {e}", flush=True)
 
     except Exception as e:
         print(f"[webhook] error processing {chat_id}: {e}", flush=True)
