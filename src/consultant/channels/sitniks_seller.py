@@ -75,9 +75,17 @@ def _human_replied(dialog: Dialog) -> bool:
     return False
 
 
+def _asked_price(dialog: Dialog) -> bool:
+    """Чи клієнтка десь у діалозі спитала про ціну (тригер запуску бота)."""
+    return any(m.sender == "client" and is_price_question(m.text) for m in dialog.messages)
+
+
 def _bot_should_take(dialog: Dialog) -> bool:
     """Бот бере чат: потрібне джерело + статус «новий» (клеймить) або вже «в обробці ботом»
     (продовжує) + остання репліка від клієнтки + жива дівчина не зайшла першою.
+
+    НОВИЙ чат бот бере ЛИШЕ якщо клієнтка спитала ЦІНУ (запуск лише на цінові звернення з
+    Facebook). Уже взятий «в обробці» чат — веде далі без цього обмеження.
 
     Мутекс: у «новому» чаті бот відступає, лише якщо менеджер відповів ПІСЛЯ клієнтки
     (жива дівчина). Авто-розсилку компанії на початку (менеджер перший) — бот НЕ рахує за
@@ -95,6 +103,8 @@ def _bot_should_take(dialog: Dialog) -> bool:
         return False
     if is_new and _human_replied(dialog):
         return False  # дівчина вже відповідає клієнтці
+    if is_new and not _asked_price(dialog):
+        return False  # запуск лише на питання про ціну
     return True
 
 
