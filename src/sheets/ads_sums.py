@@ -344,15 +344,18 @@ async def write_website_daily_sums_to_sheet(target_date: Optional[date] = None) 
 
     date_iso = target_date.isoformat()
     res = get_client().table("website_orders") \
-        .select("ad_label, total_uah") \
+        .select("ad_label, total_uah, confirmed_uah") \
         .eq("order_date", date_iso) \
         .execute()
     rows = res.data or []
 
+    # Пріоритет: confirmed_uah (реальна сума з Sitniks після звірки),
+    # fallback на total_uah (сума з заявки — поки звірка не пройшла).
     sums: Dict[str, float] = {}
     for r in rows:
         label = (r.get("ad_label") or "Без реклами (прямі)").strip()
-        amount = float(r.get("total_uah") or 0)
+        conf = r.get("confirmed_uah")
+        amount = float(conf if conf is not None else (r.get("total_uah") or 0))
         sums[label] = sums.get(label, 0) + amount
 
     sheet = AdsSumsSheet(sheet_id, sheet_name=WEBSITE_SHEET_NAME)

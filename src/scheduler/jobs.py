@@ -7,6 +7,7 @@ from src.analyzer.pipeline import analyze_period
 from src.telegram_bot.bot import send_daily_reports
 from src.telegram_bot.ads_bot import send_daily_ads_report, reattribute_yesterday
 from src.analyzer.stats_pipeline import run_stats_for_date
+from src.analyzer.website_reconcile import reconcile_last_two_days
 from src.sheets.client import SheetsClient
 from src.sheets.ads_sums import write_daily_sums_to_sheet
 from src.config import settings
@@ -84,6 +85,12 @@ def setup_scheduler() -> AsyncIOScheduler:
         daily_analysis_job,
         CronTrigger(hour=5, minute=30, timezone=KIEV_TZ),
         id="daily_analysis",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        reconcile_last_two_days,
+        CronTrigger(hour=8, minute=0, timezone=KIEV_TZ),
+        id="daily_website_reconcile",
         replace_existing=True,
     )
     scheduler.add_job(
