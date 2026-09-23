@@ -142,6 +142,12 @@ class Settings:
         return os.getenv("ADS_SHEET_ID",
                          "1vM6SIydglC0K0b-bZE5woq--2CK-BubXL8yfdnJqweQ")
 
+    @property
+    def WEBSITE_ORDERS_GROUP_ID(self):
+        """chat_id групи 'SKIN.ONE заявки з сайту'."""
+        v = os.getenv("WEBSITE_ORDERS_GROUP_ID", "-5366972060")
+        return int(v) if v else None
+
     # ── Multi-tenant client config (з sales-agent) ──────────────────────
     @property
     def client_name(self) -> str:

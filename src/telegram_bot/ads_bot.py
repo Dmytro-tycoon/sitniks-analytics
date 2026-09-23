@@ -18,6 +18,7 @@ from aiogram.types import Message
 from src.config import settings
 from src.analyzer.ad_analytics import build_ad_report, format_ad_report, mark_report_as_sent
 from src.database.supabase_client import get_client
+from src.telegram_bot.website_orders_parser import parse_order_message
 
 KIEV_TZ = pytz.timezone("Europe/Kiev")
 
@@ -104,6 +105,45 @@ async def cmd_ads_today(message: Message):
     now = datetime.now(KIEV_TZ)
     date_from = now.replace(hour=0, minute=0, second=0, microsecond=0)
     await _send_report(message, date_from, now, f"сьогодні ({date_from.strftime('%d.%m.%Y')}, наживо)")
+
+
+# ─── Handler для замовлень з сайту ─────────────────────────────────────────
+# Слухаємо групу WEBSITE_ORDERS_GROUP_ID. Парсимо повідомлення від бота
+# "SKIN-ONE Assistant" (формат "🛒 Нове замовлення з сайту XXX...").
+# Зберігаємо у Supabase.website_orders.
+
+@ads_dp.message()
+async def handle_group_message(message: Message):
+    """Ловимо всі повідомлення, фільтруємо на цільову групу + формат замовлення."""
+    group_id = settings.WEBSITE_ORDERS_GROUP_ID
+    if not group_id or message.chat.id != group_id:
+        return
+
+    text = message.text or message.caption or ""
+    parsed = parse_order_message(text)
+    if not parsed:
+        return  # звичайне повідомлення, не замовлення
+
+    # Дата замовлення = дата повідомлення (Київ)
+    dt = message.date  # aiogram віддає UTC
+    order_date = dt.astimezone(KIEV_TZ).date().isoformat() if dt else None
+
+    row = {
+        "order_id": parsed["order_id"],
+        "order_date": order_date,
+        "total_uah": parsed["total_uah"],
+        "ad_label": parsed["ad_label"],
+        "client_name": parsed["client_name"],
+        "client_phone": parsed["client_phone"],
+        "tg_message_id": message.message_id,
+        "raw_text": text[:2000],
+    }
+    try:
+        get_client().table("website_orders").upsert(row, on_conflict="order_id").execute()
+        print(f"[website_orders] saved {parsed['order_id']}: "
+              f"{parsed['total_uah']}₴ ad='{parsed['ad_label']}'")
+    except Exception as e:
+        print(f"[website_orders] save FAILED for {parsed['order_id']}: {e}")
 
 
 async def send_daily_ads_report():
