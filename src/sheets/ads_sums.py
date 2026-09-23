@@ -71,21 +71,22 @@ def _get_service():
 
 
 class AdsSumsSheet:
-    def __init__(self, spreadsheet_id: str):
+    def __init__(self, spreadsheet_id: str, sheet_name: str = SHEET_NAME):
         self.spreadsheet_id = spreadsheet_id
+        self.sheet_name = sheet_name
         self.service = _get_service()
 
     # ----- Ініціалізація / структура -----
 
     def _get_sheet_id_and_size(self) -> tuple:
-        """Повертає (sheetId, rowCount, colCount) для SHEET_NAME."""
+        """Повертає (sheetId, rowCount, colCount) для self.sheet_name."""
         meta = self.service.spreadsheets().get(spreadsheetId=self.spreadsheet_id).execute()
         for sh in meta.get("sheets", []):
             p = sh.get("properties", {})
-            if p.get("title") == SHEET_NAME:
+            if p.get("title") == self.sheet_name:
                 gp = p.get("gridProperties", {})
                 return p.get("sheetId"), gp.get("rowCount", 1000), gp.get("columnCount", 26)
-        raise RuntimeError(f"Sheet {SHEET_NAME!r} not found in spreadsheet")
+        raise RuntimeError(f"Sheet {self.sheet_name!r} not found in spreadsheet")
 
     def ensure_capacity(self):
         """Розширює лист до потрібної к-сті колонок (386)."""
@@ -111,7 +112,7 @@ class AdsSumsSheet:
         # Читаємо A1
         r = self.service.spreadsheets().values().get(
             spreadsheetId=self.spreadsheet_id,
-            range=f"{SHEET_NAME}!A1:B1",
+            range=f"{self.sheet_name}!A1:B1",
         ).execute()
         current = r.get("values", [[]])[0] if r.get("values") else []
         if current and current[:2] == ["Реклама", "Всього ₴"]:
@@ -125,7 +126,7 @@ class AdsSumsSheet:
 
         self.service.spreadsheets().values().update(
             spreadsheetId=self.spreadsheet_id,
-            range=f"{SHEET_NAME}!A1:{col_letter(len(header))}1",
+            range=f"{self.sheet_name}!A1:{col_letter(len(header))}1",
             valueInputOption="USER_ENTERED",
             body={"values": [header]},
         ).execute()
@@ -137,7 +138,7 @@ class AdsSumsSheet:
         """Читає col A (від row 2), повертає {adTitle: row_number}."""
         r = self.service.spreadsheets().values().get(
             spreadsheetId=self.spreadsheet_id,
-            range=f"{SHEET_NAME}!A2:A5000",
+            range=f"{self.sheet_name}!A2:A5000",
         ).execute()
         rows = r.get("values", [])
         return {r[0]: i + 2 for i, r in enumerate(rows) if r and r[0]}
@@ -151,7 +152,7 @@ class AdsSumsSheet:
         values = [[t] for t in ad_titles]
         self.service.spreadsheets().values().update(
             spreadsheetId=self.spreadsheet_id,
-            range=f"{SHEET_NAME}!A{next_row}:A{next_row + len(ad_titles) - 1}",
+            range=f"{self.sheet_name}!A{next_row}:A{next_row + len(ad_titles) - 1}",
             valueInputOption="USER_ENTERED",
             body={"values": values},
         ).execute()
@@ -185,7 +186,7 @@ class AdsSumsSheet:
         # у яких було значення, але у свіжому звіті їх нема (треба очистити)
         current = self.service.spreadsheets().values().get(
             spreadsheetId=self.spreadsheet_id,
-            range=f"{SHEET_NAME}!{col_str}2:{col_str}5000",
+            range=f"{self.sheet_name}!{col_str}2:{col_str}5000",
         ).execute().get("values", [])
 
         updates = []
@@ -195,7 +196,7 @@ class AdsSumsSheet:
         for title, amount in sums_by_ad.items():
             row = row_map[title]
             updates.append({
-                "range": f"{SHEET_NAME}!{col_str}{row}",
+                "range": f"{self.sheet_name}!{col_str}{row}",
                 "values": [[round(float(amount), 2)]],
             })
             touched_rows.add(row)
@@ -210,7 +211,7 @@ class AdsSumsSheet:
             try:
                 if v != "" and float(str(v).replace(",", ".")) != 0:
                     updates.append({
-                        "range": f"{SHEET_NAME}!{col_str}{row}",
+                        "range": f"{self.sheet_name}!{col_str}{row}",
                         "values": [[""]],
                     })
                     cleared += 1
@@ -221,7 +222,7 @@ class AdsSumsSheet:
         for title in sums_by_ad:
             row = row_map[title]
             updates.append({
-                "range": f"{SHEET_NAME}!B{row}",
+                "range": f"{self.sheet_name}!B{row}",
                 "values": [[f"=SUM(C{row}:{TOTAL_FORMULA_END_COL}{row})"]],
             })
 
@@ -316,4 +317,51 @@ async def write_daily_sums_to_sheet(target_date: Optional[date] = None,
         "ads_written": len(sums),
         "total_sum": sum(sums.values()),
         "stale_added_to_direct": stale_added,
+    }
+
+
+# ─── Website orders sheet ──────────────────────────────────────────────────
+
+WEBSITE_SHEET_NAME = "Аркуш3 Сайт"
+
+
+async def write_website_daily_sums_to_sheet(target_date: Optional[date] = None) -> Dict:
+    """
+    Пише суми по замовленнях з сайту (website_orders) в окремий лист
+    "Аркуш3 Сайт" тієї ж таблиці. Групування — по повній назві `ad_label`
+    (напр. "meta / skinone_catalog_2209 / 120260... / catalog (fbclid)").
+    """
+    from src.database.supabase_client import get_client
+    from src.config import settings
+
+    sheet_id = os.getenv("ADS_SHEET_ID") or getattr(settings, "ADS_SHEET_ID", "")
+    if not sheet_id:
+        print("[website_sheet] ADS_SHEET_ID не задано — пропускаю")
+        return {"skipped": True}
+
+    if target_date is None:
+        target_date = (datetime.now(KIEV_TZ) - timedelta(days=1)).date()
+
+    date_iso = target_date.isoformat()
+    res = get_client().table("website_orders") \
+        .select("ad_label, total_uah") \
+        .eq("order_date", date_iso) \
+        .execute()
+    rows = res.data or []
+
+    sums: Dict[str, float] = {}
+    for r in rows:
+        label = (r.get("ad_label") or "Без реклами (прямі)").strip()
+        amount = float(r.get("total_uah") or 0)
+        sums[label] = sums.get(label, 0) + amount
+
+    sheet = AdsSumsSheet(sheet_id, sheet_name=WEBSITE_SHEET_NAME)
+    sheet.write_day(target_date, sums)
+
+    return {
+        "date": date_iso,
+        "sheet": WEBSITE_SHEET_NAME,
+        "orders": len(rows),
+        "ads_written": len(sums),
+        "total_sum": sum(sums.values()),
     }
