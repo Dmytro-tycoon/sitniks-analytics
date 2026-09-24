@@ -116,12 +116,17 @@ async def cmd_ads_today(message: Message):
 async def handle_group_message(message: Message):
     """Ловимо всі повідомлення, фільтруємо на цільову групу + формат замовлення."""
     group_id = settings.WEBSITE_ORDERS_GROUP_ID
+    # DEBUG: логуємо будь-яке отримане повідомлення (тимчасово для дебагу)
+    print(f"[ads_bot] msg chat_id={message.chat.id} type={message.chat.type} "
+          f"from={(message.from_user.username if message.from_user else None)} "
+          f"text_len={len(message.text or message.caption or '')}")
     if not group_id or message.chat.id != group_id:
         return
 
     text = message.text or message.caption or ""
     parsed = parse_order_message(text)
     if not parsed:
+        print(f"[ads_bot] group message did not parse as order (text preview: {text[:80]!r})")
         return  # звичайне повідомлення, не замовлення
 
     # Дата замовлення = дата повідомлення (Київ)
