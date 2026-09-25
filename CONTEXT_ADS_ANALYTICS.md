@@ -103,5 +103,62 @@ asyncio.run(main())
 
 - `919bf53` — refactor: pull website orders from Sitniks by comment
 - `0ede267` — feat: skip site orders with status "Новий"
+- `6148a03` — docs: refresh CONTEXT_ADS_ANALYTICS with new site-orders flow
 
 Попередні коміти (парсер Telegram-повідомлень, sync з site-Supabase та звірку по телефону) прибрано.
+
+---
+
+## Історія рішень (для майбутніх сесій)
+
+В процесі роботи над сайт-замовленнями спробували 3 підходи, залишили тільки останній:
+
+### Підхід 1 (відкинутий): парсити Telegram-групу «SKIN.ONE заявки з сайту»
+- Бот `@skinone_advertising_bot` доданий у групу як admin з `can_read_all_group_messages=true`
+- Handler `handle_group_message` ловив повідомлення від «SKIN-ONE Assistant»
+- Регекс витягав `order_id`, `Разом X грн`, `Реклама:`, phone, name
+- Дані писались у таблицю `website_orders` (Supabase)
+- **Мінуси:** тільки нові повідомлення (нема історії), не бачить, якщо клієнт скасував/змінив.
+- **Артефакти:** таблиця `website_orders` існує в БД (не використовується); env var `WEBSITE_ORDERS_GROUP_ID=-5366972060` в Railway; файл `website_orders_parser.py` видалено.
+
+### Підхід 2 (відкинутий): читати напряму БД сайту (`lnqydhqtpfohigcvdxrg`)
+- Table `orders` містить `customer_name` з вкладеним «Реклама: XXX (fbclid)»
+- Треба було SITE_SUPABASE_URL + SITE_SUPABASE_SERVICE_KEY
+- **Проблема:** сума в БД сайту = заявлена клієнтом (напр. 1420), а не оплачена (1278 після знижки).
+- **Артефакти:** ніякого коду не написав, тільки exploratory SQL.
+
+### Підхід 3 (поточний): читати з Sitniks
+- Sitniks вже має ці замовлення (сайт створює їх через API)
+- В `managerComment` є маркер «Сайт skin-one.com.ua» і повний рядок «Реклама: XXX (fbclid)»
+- `totalPriceDiscount` — реальна сума після знижок
+- **Один API-запит на день** — все звідти
+- Не потрібно нічого крім вже наявного `SitniksClient`
+
+### Ключові рішення (з обговорення):
+- **Сума** = `totalPriceDiscount` (варіант 1) — включаючи накладний платіж. НЕ payment.amount (передоплата). НЕ «Разом» з коментаря (сума до знижки).
+- **Фільтр статусу**: пропускаємо `status.title == "Новий"` — це неоплачені заявки.
+- **Дублі не проблема**: якщо клієнт замовив 3 рази — це 3 різні `order.id` в Sitniks і 3 різні оплати.
+- Проміжна таблиця `website_orders` більше не потрібна — все на льоту.
+
+---
+
+## Приклади парсингу коментаря (для регресії)
+
+```
+Сайт skin-one.com.ua. звʼязок: Telegram; Нова Пошта, відділення: м. Красилів,
+Хмельницький р-н, Хмельницька обл., Відділення №2 (до 30 кг): вул. Булаєнка, 8а;
+оплата: оплата карткою на рахунок ФОП;
+Реклама: instagram / profile / link_in_bio (fbclid).
+Разом 1 420 грн
+```
+→ `ad_label = "instagram / profile / link_in_bio (fbclid)"`, `sum = 1278` (з totalPriceDiscount, не з "Разом 1 420")
+
+```
+❗️зібрано крім гель
+❗️оригінали, 🎁маска biodance омолоджуюча
+Сайт skin-one.com.ua. звʼязок: Telegram; ...; передоплата 200 грн, при отриманні 3 325 грн;
+подарунок: маска Biodance омолоджуюча;
+Реклама: meta / skinone_catalog_2209 / 120260678712650059 / catalog (fbclid).
+Разом 3 525 грн
+```
+→ `ad_label = "meta / skinone_catalog_2209 / 120260678712650059 / catalog (fbclid)"`, `sum = 3525` (все, разом з накладним)
