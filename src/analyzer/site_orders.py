@@ -39,11 +39,26 @@ def is_site_order(order: dict) -> bool:
     return SITE_MARKER in (order.get("managerComment") or "")
 
 
+# Замовлення зі статусом "Новий" (у Sitniks) — заявка ще не сплачена;
+# у наші звіти не потрапляє. Всі інші статуси ("В роботі", "Виконано" тощо)
+# означають що менеджер уже підтвердив і почав обробку.
+NEW_ORDER_STATUS_TITLE = "Новий"
+
+
+def is_paid_order(order: dict) -> bool:
+    """False для замовлень зі статусом 'Новий' (ще не оплачено)."""
+    status_title = ((order.get("status") or {}).get("title") or "").strip()
+    return status_title != NEW_ORDER_STATUS_TITLE
+
+
 def parse_site_order(order: dict) -> Optional[Dict]:
     """
-    Повертає dict із розібраними полями сайт-замовлення, або None якщо не сайт.
+    Повертає dict із розібраними полями сайт-замовлення, або None якщо не сайт
+    або якщо статус — 'Новий' (не оплачене).
     """
     if not is_site_order(order):
+        return None
+    if not is_paid_order(order):
         return None
     comment = order.get("managerComment") or ""
     ad_label = _extract_ad_label(comment) or "Без реклами (прямі)"
@@ -58,6 +73,7 @@ def parse_site_order(order: dict) -> Optional[Dict]:
         "ad_label": ad_label,
         "client_name": client.get("fullname"),
         "client_phone": client.get("phone"),
+        "status": ((order.get("status") or {}).get("title") or ""),
     }
 
 
