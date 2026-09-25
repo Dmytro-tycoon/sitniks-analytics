@@ -327,12 +327,14 @@ WEBSITE_SHEET_NAME = "Аркуш3 Сайт"
 
 async def write_website_daily_sums_to_sheet(target_date: Optional[date] = None) -> Dict:
     """
-    Пише суми по замовленнях з сайту (website_orders) в окремий лист
-    "Аркуш3 Сайт" тієї ж таблиці. Групування — по повній назві `ad_label`
-    (напр. "meta / skinone_catalog_2209 / 120260... / catalog (fbclid)").
+    Пише суми по сайт-замовленнях у окремий лист "Аркуш3 Сайт".
+
+    Джерело: Sitniks orders з коментарем "Сайт skin-one.com.ua" (реальні
+    оформлені замовлення з реальними totalPriceDiscount). Реклама парситься
+    з `Реклама: ...` у коментарі.
     """
-    from src.database.supabase_client import get_client
     from src.config import settings
+    from src.analyzer.site_orders import fetch_site_orders_for_date, group_by_ad_label
 
     sheet_id = os.getenv("ADS_SHEET_ID") or getattr(settings, "ADS_SHEET_ID", "")
     if not sheet_id:
@@ -342,29 +344,16 @@ async def write_website_daily_sums_to_sheet(target_date: Optional[date] = None) 
     if target_date is None:
         target_date = (datetime.now(KIEV_TZ) - timedelta(days=1)).date()
 
-    date_iso = target_date.isoformat()
-    res = get_client().table("website_orders") \
-        .select("ad_label, total_uah, confirmed_uah") \
-        .eq("order_date", date_iso) \
-        .execute()
-    rows = res.data or []
-
-    # Пріоритет: confirmed_uah (реальна сума з Sitniks після звірки),
-    # fallback на total_uah (сума з заявки — поки звірка не пройшла).
-    sums: Dict[str, float] = {}
-    for r in rows:
-        label = (r.get("ad_label") or "Без реклами (прямі)").strip()
-        conf = r.get("confirmed_uah")
-        amount = float(conf if conf is not None else (r.get("total_uah") or 0))
-        sums[label] = sums.get(label, 0) + amount
+    site_orders = await fetch_site_orders_for_date(target_date)
+    sums, _ = group_by_ad_label(site_orders)
 
     sheet = AdsSumsSheet(sheet_id, sheet_name=WEBSITE_SHEET_NAME)
     sheet.write_day(target_date, sums)
 
     return {
-        "date": date_iso,
+        "date": target_date.isoformat(),
         "sheet": WEBSITE_SHEET_NAME,
-        "orders": len(rows),
+        "orders": len(site_orders),
         "ads_written": len(sums),
         "total_sum": sum(sums.values()),
     }
