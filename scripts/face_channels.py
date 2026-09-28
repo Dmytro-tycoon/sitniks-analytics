@@ -61,7 +61,7 @@ async def collect(day: date) -> dict:
     for o in orders:
         comment = o.get("managerComment") or ""
         status = (o.get("status") or {}).get("title", "")
-        if comment.startswith(SITE_PREFIX):
+        if SITE_PREFIX in comment:  # менеджер може дописати нотатку на початку
             ch = site_channel(comment)
             st[ch]["leads"] += 1
         else:
@@ -96,9 +96,15 @@ def write(day: date, st: dict):
     dates, names = hdr[0], hdr[1]
     start = dates.index(str(day.day))
     data = []
+    # Колонки каналів стоять одразу ПЕРЕД колонкою дня (AA–AE → AF=22);
+    # для сумісності зі старою розміткою шукаємо також після неї.
+    window = list(range(start - 1, start - 8, -1)) + list(range(start + 1, start + 8))
     for ch in CHANNELS:
-        idx = next(i for i in range(start + 1, start + 8) if i < len(names) and names[i] == ch)
+        idx = next((i for i in window if 0 <= i < len(names) and names[i] == ch), None)
+        if idx is None:
+            raise RuntimeError(f"Не знайдено колонку «{ch}» поруч із {day}")
         col = sh._col_index_to_letter(idx)
+        print(f"  {ch} → колонка {col}")
         for k, row in ROWS.items():
             v = round(st[ch][k], 2) if k in ("to", "margin") else int(st[ch][k])
             data.append({"range": f"{tab}!{col}{row}", "values": [[v]]})
