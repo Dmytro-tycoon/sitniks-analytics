@@ -98,7 +98,7 @@ def write(day: date, st: dict):
     data = []
     # Колонки каналів стоять одразу ПЕРЕД колонкою дня (AA–AE → AF=22);
     # для сумісності зі старою розміткою шукаємо також після неї.
-    window = list(range(start - 1, start - 8, -1)) + list(range(start + 1, start + 8))
+    window = list(range(start - 1, start - 6, -1)) + list(range(start + 1, start + 6))  # рівно 5 колонок, щоб не зачепити сусідній день
     for ch in CHANNELS:
         idx = next((i for i in window if 0 <= i < len(names) and names[i] == ch), None)
         if idx is None:
