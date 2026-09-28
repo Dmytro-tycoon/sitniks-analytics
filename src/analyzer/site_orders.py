@@ -15,6 +15,7 @@ from typing import Dict, List, Tuple, Optional
 
 import pytz
 
+from src.analyzer.order_status import is_countable_order
 from src.sitniks.client import SitniksClient
 
 KIEV_TZ = pytz.timezone("Europe/Kiev")
@@ -39,26 +40,14 @@ def is_site_order(order: dict) -> bool:
     return SITE_MARKER in (order.get("managerComment") or "")
 
 
-# Замовлення зі статусом "Новий" (у Sitniks) — заявка ще не сплачена;
-# у наші звіти не потрапляє. Всі інші статуси ("В роботі", "Виконано" тощо)
-# означають що менеджер уже підтвердив і почав обробку.
-NEW_ORDER_STATUS_TITLE = "Новий"
-
-
-def is_paid_order(order: dict) -> bool:
-    """False для замовлень зі статусом 'Новий' (ще не оплачено)."""
-    status_title = ((order.get("status") or {}).get("title") or "").strip()
-    return status_title != NEW_ORDER_STATUS_TITLE
-
-
 def parse_site_order(order: dict) -> Optional[Dict]:
     """
     Повертає dict із розібраними полями сайт-замовлення, або None якщо не сайт
-    або якщо статус — 'Новий' (не оплачене).
+    або якщо статус не рахується («Новий», «Відмінено», «Не підтверджено»).
     """
     if not is_site_order(order):
         return None
-    if not is_paid_order(order):
+    if not is_countable_order(order):
         return None
     comment = order.get("managerComment") or ""
     ad_label = _extract_ad_label(comment) or "Без реклами (прямі)"

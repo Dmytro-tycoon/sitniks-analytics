@@ -201,7 +201,7 @@ class AdsSumsSheet:
             })
             touched_rows.add(row)
 
-        # 3. Обнуляємо реклами, які мали значення, але у свіжому звіті їх нема
+        # 3. Очищаємо реклами, які мали значення (в т.ч. 0), але у свіжому звіті їх нема
         cleared = 0
         for i, cell in enumerate(current):
             row = i + 2
@@ -209,7 +209,9 @@ class AdsSumsSheet:
                 continue
             v = cell[0] if cell else ""
             try:
-                if v != "" and float(str(v).replace(",", ".")) != 0:
+                # чистимо й нулі — інакше лишається "0" від замовлень, що випали за статусом
+                if v != "":
+                    float(str(v).replace(",", "."))  # лише числа, текст не чіпаємо
                     updates.append({
                         "range": f"{self.sheet_name}!{col_str}{row}",
                         "values": [[""]],
@@ -240,6 +242,21 @@ class AdsSumsSheet:
         )
 
 
+async def _fetch_excluded_order_ids(target_date: date) -> set:
+    """ID замовлень за target_date, які зараз мають неврахований статус у Sitniks."""
+    from src.analyzer.order_status import is_countable_order
+    from src.sitniks.client import SitniksClient
+
+    # ±1 день запасу: order_date у БД = createdAt[:10] (UTC), а не київська дата
+    day_start = KIEV_TZ.localize(datetime(target_date.year, target_date.month, target_date.day))
+    sitniks = SitniksClient()
+    try:
+        orders = await sitniks.get_orders(day_start - timedelta(days=1), day_start + timedelta(days=2))
+    finally:
+        await sitniks.close()
+    return {o.get("id") for o in orders if not is_countable_order(o)}
+
+
 # ----- Публічна функція для cron -----
 
 async def write_daily_sums_to_sheet(target_date: Optional[date] = None,
@@ -254,6 +271,10 @@ async def write_daily_sums_to_sheet(target_date: Optional[date] = None,
        fallback: build_ad_report з Sitniks (повільно, 5–10 хв).
 
     Стара атрибуція (is_stale=true) додається до NO_AD_LABEL, як і раніше.
+
+    Замовлення зі статусами «Новий», «Відмінено», «Не підтверджено» не
+    рахуються — статус перевіряємо в Sitniks на момент запису (у БД він
+    не зберігається і може змінитися після звіту).
     """
     from src.analyzer.ad_analytics import NO_AD_LABEL
     from src.database.supabase_client import get_client
@@ -270,7 +291,7 @@ async def write_daily_sums_to_sheet(target_date: Optional[date] = None,
     # 1. Спроба прочитати з БД
     date_iso = target_date.isoformat()
     res = get_client().table("reported_ad_orders") \
-        .select("ad_title, sum_uah, is_stale") \
+        .select("order_id, ad_title, sum_uah, is_stale") \
         .eq("order_date", date_iso) \
         .execute()
     db_rows = res.data or []
@@ -280,7 +301,10 @@ async def write_daily_sums_to_sheet(target_date: Optional[date] = None,
     source = None
 
     if db_rows and have_sums:
-        # Побудова сум з БД (миттєво)
+        # Побудова сум з БД (миттєво), без замовлень з неврахованими статусами
+        excluded_ids = await _fetch_excluded_order_ids(target_date)
+        excluded_count = sum(1 for r in db_rows if r.get("order_id") in excluded_ids)
+        db_rows = [r for r in db_rows if r.get("order_id") not in excluded_ids]
         stale_total = 0.0
         for r in db_rows:
             amount = float(r.get("sum_uah") or 0)
@@ -291,14 +315,15 @@ async def write_daily_sums_to_sheet(target_date: Optional[date] = None,
                 sums[title] = sums.get(title, 0) + amount
         if stale_total:
             sums[NO_AD_LABEL] = sums.get(NO_AD_LABEL, 0) + stale_total
-        source = f"db ({len(db_rows)} orders, {stale_total:.0f} stale merged)"
+        source = (f"db ({len(db_rows)} orders, {excluded_count} excluded by status, "
+                  f"{stale_total:.0f} stale merged)")
         stale_added = stale_total
     elif fallback_to_sitniks:
         # 2. Fallback на Sitniks
         from src.analyzer.ad_analytics import build_ad_report
         date_from = KIEV_TZ.localize(datetime(target_date.year, target_date.month, target_date.day, 0, 0, 0))
         date_to = date_from + timedelta(days=1)
-        report = await build_ad_report(date_from, date_to)
+        report = await build_ad_report(date_from, date_to, countable_only=True)
         sums = dict(report.get("sums", {}))
         stale_added = float(report.get("stale_total_sum", 0) or 0)
         if stale_added:

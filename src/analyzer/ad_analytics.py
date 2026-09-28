@@ -54,17 +54,23 @@ def _is_stale(order_created: Optional[str], ad_created: Optional[str], days: int
 
 
 async def build_ad_report(date_from: datetime, date_to: datetime,
-                          exclude_reported: bool = False) -> Dict:
+                          exclude_reported: bool = False,
+                          countable_only: bool = False) -> Dict:
     """
     Завантажує замовлення за період і повертає звіт.
 
     exclude_reported=True → відсіює замовлення, які вже були в попередніх ads-звітах
     (для cron-job, щоб не дублювати).
+    countable_only=True → відсіює замовлення зі статусами «Новий», «Відмінено»,
+    «Не підтверджено» (для Google Sheet, див. order_status.py).
     Повертає: {date, stats, total, orders_resolved, skipped_already_reported}
     """
     sitniks = SitniksClient()
     try:
         orders = await sitniks.get_orders(date_from, date_to)
+        if countable_only:
+            from src.analyzer.order_status import is_countable_order
+            orders = [o for o in orders if is_countable_order(o)]
         resolved = await _resolve_ad_titles(orders, sitniks)
     finally:
         await sitniks.close()
