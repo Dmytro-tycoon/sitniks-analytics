@@ -58,6 +58,7 @@ async def build_ad_report(date_from: datetime, date_to: datetime,
                           countable_only: bool = False) -> Dict:
     """
     Завантажує замовлення за період і повертає звіт.
+    Замовлення з сайту (маркер у managerComment) сюди не входять.
 
     exclude_reported=True → відсіює замовлення, які вже були в попередніх ads-звітах
     (для cron-job, щоб не дублювати).
@@ -68,6 +69,9 @@ async def build_ad_report(date_from: datetime, date_to: datetime,
     sitniks = SitniksClient()
     try:
         orders = await sitniks.get_orders(date_from, date_to)
+        # Замовлення з сайту рахуються окремо (site_orders.py, «Аркуш3 Сайт»)
+        from src.analyzer.site_orders import is_site_order
+        orders = [o for o in orders if not is_site_order(o)]
         if countable_only:
             from src.analyzer.order_status import is_countable_order
             orders = [o for o in orders if is_countable_order(o)]

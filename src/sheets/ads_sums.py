@@ -243,8 +243,12 @@ class AdsSumsSheet:
 
 
 async def _fetch_excluded_order_ids(target_date: date) -> set:
-    """ID замовлень за target_date, які зараз мають неврахований статус у Sitniks."""
+    """
+    ID замовлень за target_date, які не йдуть в «Аркуш1»: зараз мають
+    неврахований статус у Sitniks або оформлені через сайт (ті — в «Аркуш3 Сайт").
+    """
     from src.analyzer.order_status import is_countable_order
+    from src.analyzer.site_orders import is_site_order
     from src.sitniks.client import SitniksClient
 
     # ±1 день запасу: order_date у БД = createdAt[:10] (UTC), а не київська дата
@@ -254,7 +258,7 @@ async def _fetch_excluded_order_ids(target_date: date) -> set:
         orders = await sitniks.get_orders(day_start - timedelta(days=1), day_start + timedelta(days=2))
     finally:
         await sitniks.close()
-    return {o.get("id") for o in orders if not is_countable_order(o)}
+    return {o.get("id") for o in orders if not is_countable_order(o) or is_site_order(o)}
 
 
 # ----- Публічна функція для cron -----
@@ -274,7 +278,8 @@ async def write_daily_sums_to_sheet(target_date: Optional[date] = None,
 
     Замовлення зі статусами «Новий», «Відмінено», «Не підтверджено» не
     рахуються — статус перевіряємо в Sitniks на момент запису (у БД він
-    не зберігається і може змінитися після звіту).
+    не зберігається і може змінитися після звіту). Замовлення з сайту теж
+    відкидаються — вони йдуть лише в «Аркуш3 Сайт".
     """
     from src.analyzer.ad_analytics import NO_AD_LABEL
     from src.database.supabase_client import get_client
@@ -301,7 +306,7 @@ async def write_daily_sums_to_sheet(target_date: Optional[date] = None,
     source = None
 
     if db_rows and have_sums:
-        # Побудова сум з БД (миттєво), без замовлень з неврахованими статусами
+        # Побудова сум з БД (миттєво), без неврахованих статусів і сайт-замовлень
         excluded_ids = await _fetch_excluded_order_ids(target_date)
         excluded_count = sum(1 for r in db_rows if r.get("order_id") in excluded_ids)
         db_rows = [r for r in db_rows if r.get("order_id") not in excluded_ids]
@@ -315,7 +320,7 @@ async def write_daily_sums_to_sheet(target_date: Optional[date] = None,
                 sums[title] = sums.get(title, 0) + amount
         if stale_total:
             sums[NO_AD_LABEL] = sums.get(NO_AD_LABEL, 0) + stale_total
-        source = (f"db ({len(db_rows)} orders, {excluded_count} excluded by status, "
+        source = (f"db ({len(db_rows)} orders, {excluded_count} excluded (status/site), "
                   f"{stale_total:.0f} stale merged)")
         stale_added = stale_total
     elif fallback_to_sitniks:
