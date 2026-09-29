@@ -1,6 +1,7 @@
 """HTTP-сервер для Sitniks webhooks. Слухає POST /webhook/sitniks."""
 import os
 import json
+import asyncio
 from aiohttp import web
 
 from src.sitniks.client import SitniksClient
@@ -27,6 +28,30 @@ BOT_WELCOMES = {
 }
 # Дедуплікація автовітання — один раз на чат (у межах життя процесу).
 _WELCOMED_CHATS: set[str] = set()
+# «Людська» затримка перед автовітанням (сек) — щоб не з'являлось миттєво.
+WELCOME_DELAY_SECONDS = 5
+
+
+async def _send_welcome_delayed(chat_id: str, welcome_text: str, owner_name: str = "") -> None:
+    """Через WELCOME_DELAY_SECONDS шле автовітання у фоні (окремий SitniksClient,
+    бо хендлер уже закрив свій). Перед відправкою ще раз перевіряє, що менеджер не
+    встиг відповісти і вітання ще не було — інакше пропускає."""
+    try:
+        await asyncio.sleep(WELCOME_DELAY_SECONDS)
+        sc = SitniksClient()
+        try:
+            msgs = await sc.get_chat_messages(chat_id)
+            manager_replied = any((m.get("managerName") or "").strip() for m in msgs)
+            already = any((m.get("text") or "") == welcome_text for m in msgs)
+            if not manager_replied and not already:
+                await sc.send_message(chat_id, welcome_text)
+                print(f"[webhook] 🎁 welcome sent to {owner_name} chat {chat_id}", flush=True)
+            else:
+                print(f"[webhook] 🎁 skip welcome (manager_replied={manager_replied}, already={already}) {chat_id}", flush=True)
+        finally:
+            await sc.close()
+    except Exception as e:
+        print(f"[webhook] welcome failed for {chat_id}: {e}", flush=True)
 
 
 async def handle_webhook(request: web.Request) -> web.Response:
@@ -99,24 +124,15 @@ async def handle_webhook(request: web.Request) -> web.Response:
             and welcome_text
             and chat_id not in _WELCOMED_CHATS
         ):
-            try:
-                msgs = await sc.get_chat_messages(chat_id)
-                # Менеджерські повідомлення мають непорожній managerName; наше ж
-                # автовітання йде з порожнім managerName (sentBy = id бота), тому
-                # додатково перевіряємо, чи текст вітання вже є в чаті — це переживає
-                # рестарт процесу (коли _WELCOMED_CHATS порожня).
-                manager_replied = any((m.get("managerName") or "").strip() for m in msgs)
-                already_welcomed = any((m.get("text") or "") == welcome_text for m in msgs)
-                if not manager_replied and not already_welcomed:
-                    await sc.send_message(chat_id, welcome_text)
-                    print(f"[webhook] 🎁 welcome sent to {chat.get('ownerName')} chat {chat_id}", flush=True)
-                else:
-                    print(f"[webhook] 🎁 skip welcome (manager_replied={manager_replied}, already={already_welcomed}) {chat_id}", flush=True)
-                _WELCOMED_CHATS.add(chat_id)
-                if len(_WELCOMED_CHATS) > 10000:
-                    _WELCOMED_CHATS.clear()
-            except Exception as e:
-                print(f"[webhook] welcome failed for {chat_id}: {e}", flush=True)
+            # Позначаємо чат одразу (синхронно), щоб паралельні webhook-події
+            # (/start часто породжує кілька) не запланували вітання двічі.
+            if len(_WELCOMED_CHATS) > 10000:
+                _WELCOMED_CHATS.clear()
+            _WELCOMED_CHATS.add(chat_id)
+            # Відправка — у фоні з затримкою; webhook-відповідь не блокуємо.
+            asyncio.create_task(
+                _send_welcome_delayed(chat_id, welcome_text, chat.get("ownerName") or "")
+            )
 
     except Exception as e:
         print(f"[webhook] error processing {chat_id}: {e}", flush=True)
