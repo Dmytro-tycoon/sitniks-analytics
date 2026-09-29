@@ -11,13 +11,20 @@ SPAM_TAG = "🚫 SPAM"
 # Дедуплікація сповіщень про спам — щоб не спамити Telegram при кожному повідомленні
 _NOTIFIED_SPAM_CHATS: set[str] = set()
 
-# ── Автовітання gift-воронки (Telegram-канал SKIN.ONE) ──────────────────────────
-# initialSource нашого бот-каналу в Sitniks (перевірено на живому чаті).
+# ── Автовітання Telegram-ботів SKIN.ONE ─────────────────────────────────────────
+# initialSource нативного бот-каналу в Sitniks (перевірено на живому чаті).
 GIFT_SOURCE = "telegram_bot"
 GIFT_WELCOME_TEXT = (
     'Вітаємо! 🎁 Напишіть у відповідь „Хочу подарунок" — '
     'і наш спеціаліст незабаром приєднається до розмови. 😊'
 )
+ASSISTANT_WELCOME_TEXT = "Вітаю 🤍 З радістю допоможу підібрати догляд. 🙂"
+# ownerId (Telegram-id бота) → текст автовітання. Так розрізняємо два боти,
+# бо обидва мають initialSource == "telegram_bot".
+BOT_WELCOMES = {
+    "8709174676": GIFT_WELCOME_TEXT,       # SKIN.ONE — косметолог онлайн (gift)
+    "8244597584": ASSISTANT_WELCOME_TEXT,  # SKIN-ONE Assistant
+}
 # Дедуплікація автовітання — один раз на чат (у межах життя процесу).
 _WELCOMED_CHATS: set[str] = set()
 
@@ -80,13 +87,16 @@ async def handle_webhook(request: web.Request) -> web.Response:
         else:
             print(f"[webhook] ✓ not spam: {chat.get('userName')} (@{chat.get('userNickName')})", flush=True)
 
-        # ── Автовітання для Telegram gift-воронки ───────────────────────────────
-        # Шлемо один раз на чат, тільки для нашого бот-каналу і поки менеджер ще
-        # не відповів. Наша ж відповідь іде як повідомлення менеджера, але dedup-
-        # множина гарантує, що вітання не спрацює вдруге (захист від зациклення).
+        # ── Автовітання для Telegram-ботів SKIN.ONE ─────────────────────────────
+        # Текст обираємо за ботом (ownerId), бо обидва боти мають initialSource
+        # == "telegram_bot". Шлемо один раз на чат, поки менеджер ще не відповів.
+        # Наша відповідь іде як повідомлення менеджера, але dedup-множина +
+        # перевірка already_welcomed гарантують, що вітання не спрацює вдруге.
+        welcome_text = BOT_WELCOMES.get(str(chat.get("ownerId") or ""))
         if (
             not is_spam
             and chat.get("initialSource") == GIFT_SOURCE
+            and welcome_text
             and chat_id not in _WELCOMED_CHATS
         ):
             try:
@@ -96,10 +106,10 @@ async def handle_webhook(request: web.Request) -> web.Response:
                 # додатково перевіряємо, чи текст вітання вже є в чаті — це переживає
                 # рестарт процесу (коли _WELCOMED_CHATS порожня).
                 manager_replied = any((m.get("managerName") or "").strip() for m in msgs)
-                already_welcomed = any((m.get("text") or "") == GIFT_WELCOME_TEXT for m in msgs)
+                already_welcomed = any((m.get("text") or "") == welcome_text for m in msgs)
                 if not manager_replied and not already_welcomed:
-                    await sc.send_message(chat_id, GIFT_WELCOME_TEXT)
-                    print(f"[webhook] 🎁 welcome sent to telegram chat {chat_id}", flush=True)
+                    await sc.send_message(chat_id, welcome_text)
+                    print(f"[webhook] 🎁 welcome sent to {chat.get('ownerName')} chat {chat_id}", flush=True)
                 else:
                     print(f"[webhook] 🎁 skip welcome (manager_replied={manager_replied}, already={already_welcomed}) {chat_id}", flush=True)
                 _WELCOMED_CHATS.add(chat_id)
