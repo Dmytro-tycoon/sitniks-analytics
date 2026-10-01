@@ -77,7 +77,7 @@ class NovaPooshtaClient:
                     errors = data.get("errors", [])
                     raise ValueError(f"NP API error: {', '.join(errors)}")
                 return data
-            except (httpx.TimeoutException, httpx.NetworkError):
+            except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError):
                 if attempt == 3:
                     raise
                 await asyncio.sleep(2 ** attempt)
