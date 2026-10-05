@@ -21,7 +21,7 @@ import json
 import logging
 import os
 from datetime import date, datetime, timedelta
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import pytz
 from google.oauth2 import service_account
@@ -242,10 +242,13 @@ class AdsSumsSheet:
         )
 
 
-async def _fetch_excluded_order_ids(target_date: date) -> set:
+async def _fetch_current_order_state(target_date: date) -> Tuple[set, Dict]:
     """
-    ID замовлень за target_date, які не йдуть в «Аркуш1»: зараз мають
-    неврахований статус у Sitniks або оформлені через сайт (ті — в «Аркуш3 Сайт").
+    Поточний стан замовлень за target_date у Sitniks:
+      - ID, які не йдуть в «Аркуш1»: неврахований статус або оформлені через
+        сайт (ті — в «Аркуш3 Сайт");
+      - актуальні суми {order_id: totalPriceDiscount} — менеджер може змінити
+        замовлення вже після ранкового звіту, а в БД лишається стара сума.
     """
     from src.analyzer.order_status import is_countable_order
     from src.analyzer.site_orders import is_site_order
@@ -258,7 +261,15 @@ async def _fetch_excluded_order_ids(target_date: date) -> set:
         orders = await sitniks.get_orders(day_start - timedelta(days=1), day_start + timedelta(days=2))
     finally:
         await sitniks.close()
-    return {o.get("id") for o in orders if not is_countable_order(o) or is_site_order(o)}
+    excluded = {o.get("id") for o in orders if not is_countable_order(o) or is_site_order(o)}
+    amounts = {}
+    for o in orders:
+        amount = o.get("totalPriceDiscount")
+        if amount is None:
+            amount = o.get("totalPrice")
+        if amount is not None:
+            amounts[o.get("id")] = float(amount)
+    return excluded, amounts
 
 
 # ----- Публічна функція для cron -----
@@ -277,7 +288,7 @@ async def write_daily_sums_to_sheet(target_date: Optional[date] = None,
     Стара атрибуція (is_stale=true) додається до NO_AD_LABEL, як і раніше.
 
     Замовлення зі статусами «Новий», «Відмінено», «Не підтверджено» не
-    рахуються — статус перевіряємо в Sitniks на момент запису (у БД він
+    рахуються, а суми беруться актуальні — статус і суму перевіряємо в Sitniks на момент запису (у БД він
     не зберігається і може змінитися після звіту). Замовлення з сайту теж
     відкидаються — вони йдуть лише в «Аркуш3 Сайт".
     """
@@ -307,12 +318,13 @@ async def write_daily_sums_to_sheet(target_date: Optional[date] = None,
 
     if db_rows and have_sums:
         # Побудова сум з БД (миттєво), без неврахованих статусів і сайт-замовлень
-        excluded_ids = await _fetch_excluded_order_ids(target_date)
+        excluded_ids, current_amounts = await _fetch_current_order_state(target_date)
         excluded_count = sum(1 for r in db_rows if r.get("order_id") in excluded_ids)
         db_rows = [r for r in db_rows if r.get("order_id") not in excluded_ids]
         stale_total = 0.0
         for r in db_rows:
-            amount = float(r.get("sum_uah") or 0)
+            # актуальна сума з Sitniks; сума з БД — лише якщо замовлення не знайшлось
+            amount = current_amounts.get(r.get("order_id"), float(r.get("sum_uah") or 0))
             if r.get("is_stale"):
                 stale_total += amount
             else:
