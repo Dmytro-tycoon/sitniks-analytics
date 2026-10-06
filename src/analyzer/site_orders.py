@@ -73,7 +73,7 @@ async def fetch_site_orders_for_date(target_date: date) -> List[Dict]:
 
     sitniks = SitniksClient()
     try:
-        orders = await sitniks.get_orders(date_from, date_to)
+        orders = await sitniks.get_orders_exact(date_from, date_to)
     finally:
         await sitniks.close()
 

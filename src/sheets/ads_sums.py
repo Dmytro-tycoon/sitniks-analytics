@@ -242,9 +242,10 @@ class AdsSumsSheet:
         )
 
 
-async def _fetch_current_order_state(target_date: date) -> Tuple[set, Dict]:
+async def _fetch_current_order_state(target_date: date) -> Tuple[set, set, Dict]:
     """
-    Поточний стан замовлень за target_date у Sitniks:
+    Поточний стан замовлень навколо target_date у Sitniks:
+      - ID замовлень, створених саме в київську добу target_date;
       - ID, які не йдуть в «Аркуш1»: неврахований статус або оформлені через
         сайт (ті — в «Аркуш3 Сайт");
       - актуальні суми {order_id: totalPriceDiscount} — менеджер може змінити
@@ -254,13 +255,17 @@ async def _fetch_current_order_state(target_date: date) -> Tuple[set, Dict]:
     from src.analyzer.site_orders import is_site_order
     from src.sitniks.client import SitniksClient
 
-    # ±1 день запасу: order_date у БД = createdAt[:10] (UTC), а не київська дата
     day_start = KIEV_TZ.localize(datetime(target_date.year, target_date.month, target_date.day))
+    day_end = day_start + timedelta(days=1)
     sitniks = SitniksClient()
     try:
-        orders = await sitniks.get_orders(day_start - timedelta(days=1), day_start + timedelta(days=2))
+        orders = await sitniks.get_orders_exact(day_start - timedelta(days=1), day_end + timedelta(days=1))
     finally:
         await sitniks.close()
+    day_ids = {
+        o.get("id") for o in orders
+        if day_start <= datetime.fromisoformat(o["createdAt"].replace("Z", "+00:00")) < day_end
+    }
     excluded = {o.get("id") for o in orders if not is_countable_order(o) or is_site_order(o)}
     amounts = {}
     for o in orders:
@@ -269,7 +274,7 @@ async def _fetch_current_order_state(target_date: date) -> Tuple[set, Dict]:
             amount = o.get("totalPrice")
         if amount is not None:
             amounts[o.get("id")] = float(amount)
-    return excluded, amounts
+    return day_ids, excluded, amounts
 
 
 # ----- Публічна функція для cron -----
@@ -287,8 +292,8 @@ async def write_daily_sums_to_sheet(target_date: Optional[date] = None,
 
     Стара атрибуція (is_stale=true) додається до NO_AD_LABEL, як і раніше.
 
-    Замовлення зі статусами «Новий», «Відмінено», «Не підтверджено» не
-    рахуються, а суми беруться актуальні — статус і суму перевіряємо в Sitniks на момент запису (у БД він
+    День — календарна київська доба. Замовлення з неврахованими статусами
+    (order_status.py) не рахуються, а суми беруться актуальні — статус і суму перевіряємо в Sitniks на момент запису (у БД він
     не зберігається і може змінитися після звіту). Замовлення з сайту теж
     відкидаються — вони йдуть лише в «Аркуш3 Сайт".
     """
@@ -304,26 +309,30 @@ async def write_daily_sums_to_sheet(target_date: Optional[date] = None,
     if target_date is None:
         target_date = (datetime.now(KIEV_TZ) - timedelta(days=1)).date()
 
-    # 1. Спроба прочитати з БД
+    # 1. Спроба прочитати з БД. order_date у БД = createdAt[:10] (UTC), тож
+    # нічні замовлення київської доби (00:00–03:00) лежать під попередньою датою
     date_iso = target_date.isoformat()
+    prev_iso = (target_date - timedelta(days=1)).isoformat()
     res = get_client().table("reported_ad_orders") \
-        .select("order_id, ad_title, sum_uah, is_stale") \
-        .eq("order_date", date_iso) \
+        .select("order_id, order_date, ad_title, sum_uah, is_stale") \
+        .in_("order_date", [prev_iso, date_iso]) \
         .execute()
     db_rows = res.data or []
-    have_sums = any(r.get("sum_uah") is not None for r in db_rows)
+    have_sums = any(r.get("sum_uah") is not None for r in db_rows if r.get("order_date") == date_iso)
 
     sums: Dict[str, float] = {}
     source = None
 
     if db_rows and have_sums:
-        # Побудова сум з БД (миттєво), без неврахованих статусів і сайт-замовлень
-        excluded_ids, current_amounts = await _fetch_current_order_state(target_date)
+        # Побудова сум з БД (миттєво): лише київська доба, без неврахованих статусів і сайт-замовлень
+        # Замовлення, яких уже нема в Sitniks (видалені), теж відкидаються
+        day_ids, excluded_ids, current_amounts = await _fetch_current_order_state(target_date)
+        db_rows = [r for r in db_rows if r.get("order_id") in day_ids]
         excluded_count = sum(1 for r in db_rows if r.get("order_id") in excluded_ids)
         db_rows = [r for r in db_rows if r.get("order_id") not in excluded_ids]
         stale_total = 0.0
         for r in db_rows:
-            # актуальна сума з Sitniks; сума з БД — лише якщо замовлення не знайшлось
+            # актуальна сума з Sitniks, а не знімок з БД на час звіту
             amount = current_amounts.get(r.get("order_id"), float(r.get("sum_uah") or 0))
             if r.get("is_stale"):
                 stale_total += amount

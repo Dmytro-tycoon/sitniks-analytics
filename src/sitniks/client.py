@@ -1,7 +1,7 @@
 import asyncio
 import httpx
 from typing import List, Dict, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 from src.config import settings
 
 
@@ -146,6 +146,20 @@ class SitniksClient:
                 break
             skip += limit
         return all_orders
+
+    async def get_orders_exact(self, date_from: datetime, date_to: datetime) -> List[Dict]:
+        """
+        Замовлення з createdAt у [date_from, date_to) — точні межі (aware datetime).
+
+        Фільтр createdAtFrom/To у Sitniks ігнорує часовий пояс (київська доба
+        фактично стає 03:00–03:00), тож беремо з запасом і відсікаємо самі.
+        """
+        orders = await self.get_orders(date_from - timedelta(days=1), date_to + timedelta(days=1))
+        return [
+            o for o in orders
+            if o.get("createdAt")
+            and date_from <= datetime.fromisoformat(o["createdAt"].replace("Z", "+00:00")) < date_to
+        ]
 
     async def get_ad_info_for_chat(self, chat_id: str, before_iso: str = None) -> Optional[dict]:
         """
