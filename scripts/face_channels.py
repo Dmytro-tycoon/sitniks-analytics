@@ -10,7 +10,8 @@ python scripts/face_channels.py 2026-09-22 [--write]
     instagram/ig (link_in_bio) → «Інстаграм»; без мітки → «Сайт прямі»;
   - день = календарна доба за Києвом; продажі/ТО/маржа без статусів з
     src/analyzer/order_status.py (як у таблиці реклами).
-Пишемо рядки 40 (ТО), 42 (маржа), 45 (заявки), 46 (продажі).
+Пишемо рядки 40 (ТО), 42 (маржа), 45 (заявки), 46 (продажі) — у 5 колонок каналів
+і в колонку самого дня (сума каналів).
 """
 import asyncio, re, sys
 from pathlib import Path
@@ -115,6 +116,13 @@ def write(day: date, st: dict):
         for k, row in ROWS.items():
             v = round(st[ch][k], 2) if k in ("to", "margin") else int(st[ch][k])
             data.append({"range": f"{tab}!{col}{row}", "values": [[v]]})
+    # Колонка самого дня = сума каналів (ті самі рядки)
+    day_col = sh._col_index_to_letter(start)
+    print(f"  Разом → колонка {day_col}")
+    for k, row in ROWS.items():
+        total = sum(st[ch][k] for ch in CHANNELS)
+        v = round(total, 2) if k in ("to", "margin") else int(total)
+        data.append({"range": f"{tab}!{day_col}{row}", "values": [[v]]})
     sh._service.spreadsheets().values().batchUpdate(
         spreadsheetId=SHEET_ID, body={"valueInputOption": "RAW", "data": data}).execute()
 
