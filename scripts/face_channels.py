@@ -37,6 +37,7 @@ CHAT_CHANNEL = {  # (ownerName, initialSource) -> колонка
 DEFAULT_CHANNEL = "Інстаграм"  # усі інші джерела (07.10.2026)
 SITE_PREFIX = "Сайт skin-one.com.ua"
 ROWS = {"to": 40, "margin": 42, "leads": 45, "sales": 46, "items": 49}
+UAH_FORMAT = {"type": "CURRENCY", "pattern": "#,##0[$грн.]"}
 MONTHS = {9: "Вересень", 10: "Жовтень", 11: "Листопад", 12: "Грудень"}
 
 
@@ -126,6 +127,23 @@ def write(day: date, st: dict):
         data.append({"range": f"{tab}!{day_col}{row}", "values": [[v]]})
     sh._service.spreadsheets().values().batchUpdate(
         spreadsheetId=SHEET_ID, body={"valueInputOption": "RAW", "data": data}).execute()
+
+    # Гроші (рядки 40, 42) — у гривнях: скопійовані колонки бувають у форматі $
+    sheet_id = next(
+        x["properties"]["sheetId"]
+        for x in sh._service.spreadsheets().get(spreadsheetId=SHEET_ID, fields="sheets.properties").execute()["sheets"]
+        if x["properties"]["title"] == tab.strip("'")
+    )
+    first = start - len(CHANNELS)
+    reqs = [{
+        "repeatCell": {
+            "range": {"sheetId": sheet_id, "startRowIndex": row - 1, "endRowIndex": row,
+                      "startColumnIndex": first, "endColumnIndex": start + 1},
+            "cell": {"userEnteredFormat": {"numberFormat": UAH_FORMAT}},
+            "fields": "userEnteredFormat.numberFormat",
+        }
+    } for row in (ROWS["to"], ROWS["margin"])]
+    sh._service.spreadsheets().batchUpdate(spreadsheetId=SHEET_ID, body={"requests": reqs}).execute()
 
 
 if __name__ == "__main__":
