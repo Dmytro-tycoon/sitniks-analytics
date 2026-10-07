@@ -10,7 +10,8 @@ python scripts/face_channels.py 2026-09-22 [--write]
     instagram/ig (link_in_bio) → «Інстаграм»; без мітки → «Сайт прямі»;
   - день = календарна доба за Києвом; продажі/ТО/маржа без статусів з
     src/analyzer/order_status.py (як у таблиці реклами).
-Пишемо рядки 40 (ТО), 42 (маржа), 45 (заявки), 46 (продажі), 49 (товарів) — у 5 колонок каналів
+Пишемо рядки 40 (ТО), 42 (маржа), 45 (заявки), 46 (продажі), 47 (повторні — див.
+src/analyzer/repeat_clients.py), 49 (товарів) — у 5 колонок каналів
 і в колонку самого дня (сума каналів).
 """
 import asyncio, re, sys
@@ -24,6 +25,7 @@ from src.config import settings
 from src.sitniks.client import SitniksClient
 from src.sheets.client import SheetsClient
 from src.analyzer.order_status import is_countable_order
+from src.analyzer import repeat_clients
 
 KIEV = pytz.timezone("Europe/Kiev")
 SHEET_ID = "1U-JZBWFBb-zFMpBGF-h50lFgUKtRnN5zyLkuQofiKyI"
@@ -36,7 +38,7 @@ CHAT_CHANNEL = {  # (ownerName, initialSource) -> колонка
 }
 DEFAULT_CHANNEL = "Інстаграм"  # усі інші джерела (07.10.2026)
 SITE_PREFIX = "Сайт skin-one.com.ua"
-ROWS = {"to": 40, "margin": 42, "leads": 45, "sales": 46, "items": 49}
+ROWS = {"to": 40, "margin": 42, "leads": 45, "sales": 46, "repeat": 47, "items": 49}
 UAH_FORMAT = {"type": "CURRENCY", "pattern": "#,##0[$грн.]"}
 MONTHS = {9: "Вересень", 10: "Жовтень", 11: "Листопад", 12: "Грудень"}
 
@@ -59,6 +61,7 @@ async def collect(day: date) -> dict:
     a = KIEV.localize(datetime(day.year, day.month, day.day))
     b = a + timedelta(days=1)
     orders = await s.get_orders_exact(a, b)
+    index = repeat_clients.load_index()
     # межі в UTC: фільтри Sitniks ігнорують часовий пояс у рядку дати
     new_chats = await s.get_all_chats(a.astimezone(pytz.utc), b.astimezone(pytz.utc), by_first_message=True)
 
@@ -95,7 +98,11 @@ async def collect(day: date) -> dict:
         st[ch]["to"] += to
         st[ch]["margin"] += to - cost
         st[ch]["sales"] += 1
+        st[ch]["repeat"] += repeat_clients.is_repeat(o, index)
         st[ch]["items"] += sum(float(p.get("quantity") or 1) for p in o.get("products", []))
+    # покупки дня → в індекс (перші покупки нових клієнтів)
+    if repeat_clients.update_index(index, orders):
+        repeat_clients.save_index(index)
     return st
 
 
@@ -149,12 +156,13 @@ def write(day: date, st: dict):
 if __name__ == "__main__":
     day = date.fromisoformat(sys.argv[1])
     st = asyncio.run(collect(day))
-    print(f"{'':12}{'ТО':>10}{'Маржа':>10}{'Заявок':>8}{'Продажі':>9}{'Товарів':>9}")
+    print(f"{'':12}{'ТО':>10}{'Маржа':>10}{'Заявок':>8}{'Продажі':>9}{'Повт.':>7}{'Товарів':>9}")
     for ch in CHANNELS:
         d = st[ch]
-        print(f"{ch:12}{d['to']:>10.2f}{d['margin']:>10.2f}{d['leads']:>8.0f}{d['sales']:>9.0f}{d['items']:>9.0f}")
+        print(f"{ch:12}{d['to']:>10.2f}{d['margin']:>10.2f}{d['leads']:>8.0f}{d['sales']:>9.0f}{d['repeat']:>7.0f}{d['items']:>9.0f}")
     print(f"{'Разом':12}{sum(st[c]['to'] for c in CHANNELS):>10.2f}{sum(st[c]['margin'] for c in CHANNELS):>10.2f}"
           f"{sum(st[c]['leads'] for c in CHANNELS):>8.0f}{sum(st[c]['sales'] for c in CHANNELS):>9.0f}"
+          f"{sum(st[c]['repeat'] for c in CHANNELS):>7.0f}"
           f"{sum(st[c]['items'] for c in CHANNELS):>9.0f}")
     if "--write" in sys.argv:
         write(day, st)
