@@ -4,7 +4,7 @@ python scripts/face_channels.py 2026-09-22 [--write]
 
 Без --write лише друкує таблицю. Правила каналів погоджено у вересні 2026,
 оновлено 07.10.2026 (5 каналів, стовпці одразу перед стовпцем дня):
-  - чати — за (ownerName, initialSource); бот SKIN-ONE Assistant → «Сайт ФБ»;
+  - чати — за (ownerName, initialSource); бот SKIN-ONE Assistant → «Сайт прямі» (07.10.2026);
     усе, що не підпадає під канали (інші чати, замовлення без чату) → «Інстаграм»;
   - сайт — за міткою `Реклама:` у коментарі: meta → «Сайт ФБ», google → «Сайт Гугл»,
     instagram/ig (link_in_bio) → «Інстаграм»; без мітки → «Сайт прямі»;
@@ -37,7 +37,7 @@ CHAT_CHANNEL = {  # (ownerName, initialSource) -> колонка
     ("skin.one.ua", "instagram"): "Інстаграм",
     ("Анастасія Ємець - косметолог-естетист", "facebook"): "ФБ",
     ("SKIN.ONE — косметолог онлайн", "telegram_bot"): "Інстаграм",
-    ("SKIN-ONE Assistant", "telegram_bot"): "Сайт ФБ",
+    ("SKIN-ONE Assistant", "telegram_bot"): "Сайт прямі",
 }
 DEFAULT_CHANNEL = "Інстаграм"  # усі інші джерела (07.10.2026)
 SITE_PREFIX = "Сайт skin-one.com.ua"
