@@ -20,34 +20,39 @@ GIFT_WELCOME_TEXT = (
     'і наш спеціаліст незабаром приєднається до розмови. 😊'
 )
 ASSISTANT_WELCOME_TEXT = "Вітаю 🤍 З радістю допоможу підібрати догляд. 🙂"
-# ownerId (Telegram-id бота) → текст автовітання. Так розрізняємо два боти,
-# бо обидва мають initialSource == "telegram_bot".
-BOT_WELCOMES = {
-    "8709174676": GIFT_WELCOME_TEXT,       # SKIN.ONE — косметолог онлайн (gift)
-    "8244597584": ASSISTANT_WELCOME_TEXT,  # SKIN-ONE Assistant
+ASSISTANT_FOLLOWUP_TEXT = "Зможете відповісти на декілька уточнюючих питань щодо шкіри?"
+
+# ownerId (Telegram-id бота) → послідовність кроків автовітання: (затримка_перед_
+# відправкою_сек, текст). Так розрізняємо два боти (обидва мають initialSource
+# == "telegram_bot") і можемо слати кілька повідомлень поспіль.
+BOT_WELCOME_FLOWS = {
+    # SKIN.ONE — косметолог онлайн (gift): одне вітання через 5с
+    "8709174676": [(5, GIFT_WELCOME_TEXT)],
+    # SKIN-ONE Assistant: вітання через 5с, потім уточнення ще через 4с
+    "8244597584": [(5, ASSISTANT_WELCOME_TEXT), (4, ASSISTANT_FOLLOWUP_TEXT)],
 }
-# Дедуплікація автовітання — один раз на чат (у межах життя процесу).
+# Дедуплікація — одна послідовність на чат (у межах життя процесу).
 _WELCOMED_CHATS: set[str] = set()
-# «Людська» затримка перед автовітанням (сек) — щоб не з'являлось миттєво.
-WELCOME_DELAY_SECONDS = 5
 
 
-async def _send_welcome_delayed(chat_id: str, welcome_text: str, owner_name: str = "") -> None:
-    """Через WELCOME_DELAY_SECONDS шле автовітання у фоні (окремий SitniksClient,
-    бо хендлер уже закрив свій). Перед відправкою ще раз перевіряє, що менеджер не
-    встиг відповісти і вітання ще не було — інакше пропускає."""
+async def _send_welcome_flow(chat_id: str, steps, owner_name: str = "") -> None:
+    """Шле послідовність автовітання у фоні (окремий SitniksClient, бо хендлер уже
+    закрив свій). Перед кожним кроком: чекає задану затримку; якщо менеджер уже
+    відповів — зупиняє послідовність; якщо такий текст уже є в чаті — пропускає цей
+    крок (ідемпотентно, переживає рестарт процесу)."""
     try:
-        await asyncio.sleep(WELCOME_DELAY_SECONDS)
         sc = SitniksClient()
         try:
-            msgs = await sc.get_chat_messages(chat_id)
-            manager_replied = any((m.get("managerName") or "").strip() for m in msgs)
-            already = any((m.get("text") or "") == welcome_text for m in msgs)
-            if not manager_replied and not already:
-                await sc.send_message(chat_id, welcome_text)
-                print(f"[webhook] 🎁 welcome sent to {owner_name} chat {chat_id}", flush=True)
-            else:
-                print(f"[webhook] 🎁 skip welcome (manager_replied={manager_replied}, already={already}) {chat_id}", flush=True)
+            for delay, text in steps:
+                await asyncio.sleep(delay)
+                msgs = await sc.get_chat_messages(chat_id)
+                if any((m.get("managerName") or "").strip() for m in msgs):
+                    print(f"[webhook] 🎁 stop flow (manager replied) {chat_id}", flush=True)
+                    break
+                if any((m.get("text") or "") == text for m in msgs):
+                    continue
+                await sc.send_message(chat_id, text)
+                print(f"[webhook] 🎁 welcome step sent to {owner_name} chat {chat_id}", flush=True)
         finally:
             await sc.close()
     except Exception as e:
@@ -117,21 +122,21 @@ async def handle_webhook(request: web.Request) -> web.Response:
         # == "telegram_bot". Шлемо один раз на чат, поки менеджер ще не відповів.
         # Наша відповідь іде як повідомлення менеджера, але dedup-множина +
         # перевірка already_welcomed гарантують, що вітання не спрацює вдруге.
-        welcome_text = BOT_WELCOMES.get(str(chat.get("ownerId") or ""))
+        steps = BOT_WELCOME_FLOWS.get(str(chat.get("ownerId") or ""))
         if (
             not is_spam
             and chat.get("initialSource") == GIFT_SOURCE
-            and welcome_text
+            and steps
             and chat_id not in _WELCOMED_CHATS
         ):
             # Позначаємо чат одразу (синхронно), щоб паралельні webhook-події
-            # (/start часто породжує кілька) не запланували вітання двічі.
+            # (/start часто породжує кілька) не запланували послідовність двічі.
             if len(_WELCOMED_CHATS) > 10000:
                 _WELCOMED_CHATS.clear()
             _WELCOMED_CHATS.add(chat_id)
-            # Відправка — у фоні з затримкою; webhook-відповідь не блокуємо.
+            # Відправка — у фоні з затримками; webhook-відповідь не блокуємо.
             asyncio.create_task(
-                _send_welcome_delayed(chat_id, welcome_text, chat.get("ownerName") or "")
+                _send_welcome_flow(chat_id, steps, chat.get("ownerName") or "")
             )
 
     except Exception as e:
