@@ -2,20 +2,26 @@
 
 python scripts/face_channels.py 2026-09-22 [--write]
 
-Без --write лише друкує таблицю. Правила каналів погоджено у вересні 2026:
-чати — за (ownerName, initialSource); сайт — за міткою `Реклама:` у коментарі.
-Продажі/ТО без статусів Відмінено / Не підтверджено / Новий. Рядок 47 не заповнюємо.
+Без --write лише друкує таблицю. Правила каналів погоджено у вересні 2026,
+оновлено 07.10.2026 (5 каналів, стовпці одразу перед стовпцем дня):
+  - чати — за (ownerName, initialSource); бот SKIN-ONE Assistant → «Сайт ФБ»;
+  - сайт — за міткою `Реклама:` у коментарі: meta → «Сайт ФБ», google → «Сайт Гугл»,
+    instagram/ig (link_in_bio) → «Інстаграм»; без мітки → «Сайт прямі»;
+  - день = календарна доба за Києвом; продажі/ТО/маржа без статусів з
+    src/analyzer/order_status.py (як у таблиці реклами).
+Пишемо рядки 40 (ТО), 42 (маржа), 45 (заявки), 46 (продажі).
 """
 import asyncio, re, sys
 from pathlib import Path
 from collections import defaultdict
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import pytz
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.config import settings
 from src.sitniks.client import SitniksClient
 from src.sheets.client import SheetsClient
+from src.analyzer.order_status import is_countable_order
 
 KIEV = pytz.timezone("Europe/Kiev")
 SHEET_ID = "1U-JZBWFBb-zFMpBGF-h50lFgUKtRnN5zyLkuQofiKyI"
@@ -24,30 +30,33 @@ CHAT_CHANNEL = {  # (ownerName, initialSource) -> колонка
     ("skin.one.ua", "instagram"): "Інстаграм",
     ("Анастасія Ємець - косметолог-естетист", "facebook"): "ФБ",
     ("SKIN.ONE — косметолог онлайн", "telegram_bot"): "Інстаграм",
-    ("SKIN-ONE Assistant", "telegram_bot"): "Сайт прямі",
+    ("SKIN-ONE Assistant", "telegram_bot"): "Сайт ФБ",
 }
 SITE_PREFIX = "Сайт skin-one.com.ua"
-NOT_SALE = {"Відмінено", "Не підтверджено", "Новий"}
-ROWS = {"to": 40, "margin": 42, "leads": 45, "sales": 46, "items": 49}
+ROWS = {"to": 40, "margin": 42, "leads": 45, "sales": 46}
 MONTHS = {9: "Вересень", 10: "Жовтень", 11: "Листопад", 12: "Грудень"}
 
 
 def site_channel(comment: str) -> str:
+    """Канал сайт-замовлення за міткою `Реклама:`."""
     m = re.search(r"Реклама:\s*([^/\s]+)", comment)
     src = (m.group(1).lower() if m else "")
     if src == "meta":
         return "Сайт ФБ"
     if src == "google":
         return "Сайт Гугл"
-    return "Сайт прямі"  # instagram/ig link_in_bio або без мітки
+    if src in ("instagram", "ig"):  # link_in_bio з інстаграм-профілю
+        return "Інстаграм"
+    return "Сайт прямі"  # без мітки реклами
 
 
 async def collect(day: date) -> dict:
     s = SitniksClient()
-    a = KIEV.localize(datetime(day.year, day.month, day.day, 0, 0, 0))
-    b = KIEV.localize(datetime(day.year, day.month, day.day, 23, 59, 59))
-    orders = await s.get_orders(a, b)
-    new_chats = await s.get_all_chats(a, b, by_first_message=True)
+    a = KIEV.localize(datetime(day.year, day.month, day.day))
+    b = a + timedelta(days=1)
+    orders = await s.get_orders_exact(a, b)
+    # межі в UTC: фільтри Sitniks ігнорують часовий пояс у рядку дати
+    new_chats = await s.get_all_chats(a.astimezone(pytz.utc), b.astimezone(pytz.utc), by_first_message=True)
 
     st = {c: defaultdict(float) for c in CHANNELS}
     new_ids = set()
@@ -60,7 +69,6 @@ async def collect(day: date) -> dict:
     chat_cache = {}
     for o in orders:
         comment = o.get("managerComment") or ""
-        status = (o.get("status") or {}).get("title", "")
         if SITE_PREFIX in comment:  # менеджер може дописати нотатку на початку
             ch = site_channel(comment)
             st[ch]["leads"] += 1
@@ -77,14 +85,13 @@ async def collect(day: date) -> dict:
                 continue
             if cid not in new_ids:
                 st[ch]["leads"] += 1  # замовлення з діючого чату
-        if status in NOT_SALE:
+        if not is_countable_order(o):
             continue
         to = float(o.get("totalPriceDiscount") or 0)
-        cost = sum(float(p.get("costPrice") or 0) * int(p.get("quantity") or 1) for p in o.get("products", []))
+        cost = sum(float(p.get("costPrice") or 0) * float(p.get("quantity") or 1) for p in o.get("products", []))
         st[ch]["to"] += to
         st[ch]["margin"] += to - cost
         st[ch]["sales"] += 1
-        st[ch]["items"] += sum(int(p.get("quantity") or 1) for p in o.get("products", []))
     return st
 
 
@@ -96,9 +103,8 @@ def write(day: date, st: dict):
     dates, names = hdr[0], hdr[1]
     start = dates.index(str(day.day))
     data = []
-    # Колонки каналів стоять одразу ПЕРЕД колонкою дня (AA–AE → AF=22);
-    # для сумісності зі старою розміткою шукаємо також після неї.
-    window = list(range(start - 1, start - 6, -1)) + list(range(start + 1, start + 6))  # рівно 5 колонок, щоб не зачепити сусідній день
+    # Колонки каналів стоять одразу ПЕРЕД колонкою дня (BL–BP → BQ=28).
+    window = list(range(start - 1, start - 1 - len(CHANNELS), -1))  # рівно 5 колонок перед днем
     for ch in CHANNELS:
         idx = next((i for i in window if 0 <= i < len(names) and names[i] == ch), None)
         if idx is None:
@@ -115,10 +121,10 @@ def write(day: date, st: dict):
 if __name__ == "__main__":
     day = date.fromisoformat(sys.argv[1])
     st = asyncio.run(collect(day))
-    print(f"{'':12}{'ТО':>10}{'Маржа':>10}{'Заявок':>8}{'Продажі':>9}{'Товарів':>9}")
+    print(f"{'':12}{'ТО':>10}{'Маржа':>10}{'Заявок':>8}{'Продажі':>9}")
     for ch in CHANNELS:
         d = st[ch]
-        print(f"{ch:12}{d['to']:>10.0f}{d['margin']:>10.0f}{d['leads']:>8.0f}{d['sales']:>9.0f}{d['items']:>9.0f}")
+        print(f"{ch:12}{d['to']:>10.2f}{d['margin']:>10.2f}{d['leads']:>8.0f}{d['sales']:>9.0f}")
     if "--write" in sys.argv:
         write(day, st)
         print("✅ записано")
