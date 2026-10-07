@@ -12,7 +12,8 @@ python scripts/face_channels.py 2026-09-22 [--write]
     src/analyzer/order_status.py (як у таблиці реклами).
 Рекламу сайту (рядки 55 бюджет, 57 покази, 58 кліки) беремо з дашборда Дениса
 (`/api/rnp`, ключ DASH_RNP_KEY у .env): Meta-оголошення сайту → «Сайт ФБ», Google → «Сайт Гугл».
-Колонку дня в 55/57/58 НЕ пишемо — там ручна сума по обох кабінетах Meta (доступу ще нема).
+Колонка дня в 55/57/58 = формула SUM(Інстаграм…Сайт Гугл) (рішення 07.10.2026);
+«Інстаграм»/«ФБ» у цих рядках поки вносяться вручну (нема доступу до кабінетів Meta).
 Пишемо рядки 40 (ТО), 42 (маржа), 45 (заявки), 46 (продажі), 47 (повторні — див.
 src/analyzer/repeat_clients.py), 49 (товарів) — у 5 колонок каналів
 і в колонку самого дня (сума каналів).
@@ -163,6 +164,15 @@ def write(day: date, st: dict, ads: dict):
         data.append({"range": f"{tab}!{day_col}{row}", "values": [[v]]})
     sh._service.spreadsheets().values().batchUpdate(
         spreadsheetId=SHEET_ID, body={"valueInputOption": "RAW", "data": data}).execute()
+
+    # Реклама в колонці дня = сума каналів Інстаграм…Сайт Гугл (формулою)
+    first_col = sh._col_index_to_letter(start - len(CHANNELS))
+    google_col = sh._col_index_to_letter(start - 2)
+    sh._service.spreadsheets().values().batchUpdate(spreadsheetId=SHEET_ID, body={
+        "valueInputOption": "USER_ENTERED",
+        "data": [{"range": f"{tab}!{day_col}{row}", "values": [[f"=SUM({first_col}{row}:{google_col}{row})"]]}
+                 for row in AD_ROWS.values()],
+    }).execute()
 
     # Гроші (рядки 40, 42) — у гривнях: скопійовані колонки бувають у форматі $
     sheet_id = next(
