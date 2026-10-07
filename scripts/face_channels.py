@@ -5,6 +5,7 @@ python scripts/face_channels.py 2026-09-22 [--write]
 Без --write лише друкує таблицю. Правила каналів погоджено у вересні 2026,
 оновлено 07.10.2026 (5 каналів, стовпці одразу перед стовпцем дня):
   - чати — за (ownerName, initialSource); бот SKIN-ONE Assistant → «Сайт ФБ»;
+    усе, що не підпадає під канали (інші чати, замовлення без чату) → «Інстаграм»;
   - сайт — за міткою `Реклама:` у коментарі: meta → «Сайт ФБ», google → «Сайт Гугл»,
     instagram/ig (link_in_bio) → «Інстаграм»; без мітки → «Сайт прямі»;
   - день = календарна доба за Києвом; продажі/ТО/маржа без статусів з
@@ -32,6 +33,7 @@ CHAT_CHANNEL = {  # (ownerName, initialSource) -> колонка
     ("SKIN.ONE — косметолог онлайн", "telegram_bot"): "Інстаграм",
     ("SKIN-ONE Assistant", "telegram_bot"): "Сайт ФБ",
 }
+DEFAULT_CHANNEL = "Інстаграм"  # усі інші джерела (07.10.2026)
 SITE_PREFIX = "Сайт skin-one.com.ua"
 ROWS = {"to": 40, "margin": 42, "leads": 45, "sales": 46}
 MONTHS = {9: "Вересень", 10: "Жовтень", 11: "Листопад", 12: "Грудень"}
@@ -61,10 +63,9 @@ async def collect(day: date) -> dict:
     st = {c: defaultdict(float) for c in CHANNELS}
     new_ids = set()
     for c in new_chats:
-        ch = CHAT_CHANNEL.get((c.get("ownerName"), c.get("initialSource")))
-        if ch:
-            st[ch]["leads"] += 1
-            new_ids.add(c["id"])
+        ch = CHAT_CHANNEL.get((c.get("ownerName"), c.get("initialSource")), DEFAULT_CHANNEL)
+        st[ch]["leads"] += 1
+        new_ids.add(c["id"])
 
     chat_cache = {}
     for o in orders:
@@ -75,16 +76,16 @@ async def collect(day: date) -> dict:
         else:
             cid = o.get("chatId")
             if not cid:
-                continue
-            if cid not in chat_cache:
-                chat_cache[cid] = await s.get_chat(cid)
-                await asyncio.sleep(0.3)
-            chat = chat_cache[cid]
-            ch = CHAT_CHANNEL.get((chat.get("ownerName"), chat.get("initialSource")))
-            if not ch:
-                continue
-            if cid not in new_ids:
-                st[ch]["leads"] += 1  # замовлення з діючого чату
+                ch = DEFAULT_CHANNEL
+                st[ch]["leads"] += 1
+            else:
+                if cid not in chat_cache:
+                    chat_cache[cid] = await s.get_chat(cid)
+                    await asyncio.sleep(0.3)
+                chat = chat_cache[cid]
+                ch = CHAT_CHANNEL.get((chat.get("ownerName"), chat.get("initialSource")), DEFAULT_CHANNEL)
+                if cid not in new_ids:
+                    st[ch]["leads"] += 1  # замовлення з діючого чату
         if not is_countable_order(o):
             continue
         to = float(o.get("totalPriceDiscount") or 0)
@@ -125,6 +126,8 @@ if __name__ == "__main__":
     for ch in CHANNELS:
         d = st[ch]
         print(f"{ch:12}{d['to']:>10.2f}{d['margin']:>10.2f}{d['leads']:>8.0f}{d['sales']:>9.0f}")
+    print(f"{'Разом':12}{sum(st[c]['to'] for c in CHANNELS):>10.2f}{sum(st[c]['margin'] for c in CHANNELS):>10.2f}"
+          f"{sum(st[c]['leads'] for c in CHANNELS):>8.0f}{sum(st[c]['sales'] for c in CHANNELS):>9.0f}")
     if "--write" in sys.argv:
         write(day, st)
         print("✅ записано")
