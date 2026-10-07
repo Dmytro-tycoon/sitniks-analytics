@@ -10,11 +10,14 @@ python scripts/face_channels.py 2026-09-22 [--write]
     instagram/ig (link_in_bio) → «Інстаграм»; без мітки → «Сайт прямі»;
   - день = календарна доба за Києвом; продажі/ТО/маржа без статусів з
     src/analyzer/order_status.py (як у таблиці реклами).
+Рекламу сайту (рядки 55 бюджет, 57 покази, 58 кліки) беремо з дашборда Дениса
+(`/api/rnp`, ключ DASH_RNP_KEY у .env): Meta-оголошення сайту → «Сайт ФБ», Google → «Сайт Гугл».
+Колонку дня в 55/57/58 НЕ пишемо — там ручна сума по обох кабінетах Meta (доступу ще нема).
 Пишемо рядки 40 (ТО), 42 (маржа), 45 (заявки), 46 (продажі), 47 (повторні — див.
 src/analyzer/repeat_clients.py), 49 (товарів) — у 5 колонок каналів
 і в колонку самого дня (сума каналів).
 """
-import asyncio, re, sys
+import asyncio, json, os, re, sys, urllib.request
 from pathlib import Path
 from collections import defaultdict
 from datetime import datetime, date, timedelta
@@ -39,6 +42,9 @@ CHAT_CHANNEL = {  # (ownerName, initialSource) -> колонка
 DEFAULT_CHANNEL = "Інстаграм"  # усі інші джерела (07.10.2026)
 SITE_PREFIX = "Сайт skin-one.com.ua"
 ROWS = {"to": 40, "margin": 42, "leads": 45, "sales": 46, "repeat": 47, "items": 49}
+AD_ROWS = {"spend": 55, "impressions": 57, "clicks": 58}
+AD_SOURCES = {"Сайт ФБ": "meta", "Сайт Гугл": "google"}  # канал → блок у /api/rnp дашборда
+DASH_URL = "https://dash-two-topaz.vercel.app/api/rnp?k={key}"
 UAH_FORMAT = {"type": "CURRENCY", "pattern": "#,##0[$грн.]"}
 MONTHS = {9: "Вересень", 10: "Жовтень", 11: "Листопад", 12: "Грудень"}
 
@@ -106,7 +112,23 @@ async def collect(day: date) -> dict:
     return st
 
 
-def write(day: date, st: dict):
+def fetch_site_ads(day: date) -> dict:
+    """{канал: {spend, impressions, clicks}} реклами сайту за день з дашборда Дениса."""
+    key = os.getenv("DASH_RNP_KEY") or getattr(settings, "DASH_RNP_KEY", "")
+    if not key:
+        print("  DASH_RNP_KEY не задано — рядки 55/57/58 пропускаю")
+        return {}
+    with urllib.request.urlopen(DASH_URL.format(key=key), timeout=60) as r:
+        dash = json.load(r)
+    out = {}
+    for ch, block in AD_SOURCES.items():
+        d = ((dash.get(block) or {}).get("days") or {}).get(day.isoformat())
+        if d:
+            out[ch] = {k: d.get(k) or 0 for k in AD_ROWS}
+    return out
+
+
+def write(day: date, st: dict, ads: dict):
     sh = SheetsClient(settings.GOOGLE_SERVICE_ACCOUNT_FILE, SHEET_ID)
     tab = f"'РНП День ({MONTHS[day.month]})'"
     hdr = sh._service.spreadsheets().values().get(
@@ -124,6 +146,13 @@ def write(day: date, st: dict):
         print(f"  {ch} → колонка {col}")
         for k, row in ROWS.items():
             v = round(st[ch][k], 2) if k in ("to", "margin") else int(round(st[ch][k]))
+            data.append({"range": f"{tab}!{col}{row}", "values": [[v]]})
+    # Реклама сайту (55/57/58) — лише колонки «Сайт ФБ» / «Сайт Гугл»
+    for ch, vals in ads.items():
+        idx = next(i for i in window if 0 <= i < len(names) and names[i] == ch)
+        col = sh._col_index_to_letter(idx)
+        for k, row in AD_ROWS.items():
+            v = round(float(vals[k]), 2) if k == "spend" else int(vals[k])
             data.append({"range": f"{tab}!{col}{row}", "values": [[v]]})
     # Колонка самого дня = сума каналів (ті самі рядки)
     day_col = sh._col_index_to_letter(start)
@@ -149,7 +178,7 @@ def write(day: date, st: dict):
             "cell": {"userEnteredFormat": {"numberFormat": UAH_FORMAT}},
             "fields": "userEnteredFormat.numberFormat",
         }
-    } for row in (ROWS["to"], ROWS["margin"])]
+    } for row in (ROWS["to"], ROWS["margin"], AD_ROWS["spend"])]
     sh._service.spreadsheets().batchUpdate(spreadsheetId=SHEET_ID, body={"requests": reqs}).execute()
 
 
@@ -164,6 +193,9 @@ if __name__ == "__main__":
           f"{sum(st[c]['leads'] for c in CHANNELS):>8.0f}{sum(st[c]['sales'] for c in CHANNELS):>9.0f}"
           f"{sum(st[c]['repeat'] for c in CHANNELS):>7.0f}"
           f"{sum(st[c]['items'] for c in CHANNELS):>9.0f}")
+    ads = fetch_site_ads(day)
+    for ch, v in ads.items():
+        print(f"Реклама {ch}: {v['spend']} ₴, показів {v['impressions']}, кліків {v['clicks']}")
     if "--write" in sys.argv:
-        write(day, st)
+        write(day, st, ads)
         print("✅ записано")
