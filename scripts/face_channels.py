@@ -10,7 +10,7 @@ python scripts/face_channels.py 2026-09-22 [--write]
     instagram/ig (link_in_bio) → «Інстаграм»; без мітки → «Сайт прямі»;
   - день = календарна доба за Києвом; продажі/ТО/маржа без статусів з
     src/analyzer/order_status.py (як у таблиці реклами).
-Пишемо рядки 40 (ТО), 42 (маржа), 45 (заявки), 46 (продажі) — у 5 колонок каналів
+Пишемо рядки 40 (ТО), 42 (маржа), 45 (заявки), 46 (продажі), 49 (товарів) — у 5 колонок каналів
 і в колонку самого дня (сума каналів).
 """
 import asyncio, re, sys
@@ -36,7 +36,7 @@ CHAT_CHANNEL = {  # (ownerName, initialSource) -> колонка
 }
 DEFAULT_CHANNEL = "Інстаграм"  # усі інші джерела (07.10.2026)
 SITE_PREFIX = "Сайт skin-one.com.ua"
-ROWS = {"to": 40, "margin": 42, "leads": 45, "sales": 46}
+ROWS = {"to": 40, "margin": 42, "leads": 45, "sales": 46, "items": 49}
 MONTHS = {9: "Вересень", 10: "Жовтень", 11: "Листопад", 12: "Грудень"}
 
 
@@ -94,6 +94,7 @@ async def collect(day: date) -> dict:
         st[ch]["to"] += to
         st[ch]["margin"] += to - cost
         st[ch]["sales"] += 1
+        st[ch]["items"] += sum(float(p.get("quantity") or 1) for p in o.get("products", []))
     return st
 
 
@@ -114,14 +115,14 @@ def write(day: date, st: dict):
         col = sh._col_index_to_letter(idx)
         print(f"  {ch} → колонка {col}")
         for k, row in ROWS.items():
-            v = round(st[ch][k], 2) if k in ("to", "margin") else int(st[ch][k])
+            v = round(st[ch][k], 2) if k in ("to", "margin") else int(round(st[ch][k]))
             data.append({"range": f"{tab}!{col}{row}", "values": [[v]]})
     # Колонка самого дня = сума каналів (ті самі рядки)
     day_col = sh._col_index_to_letter(start)
     print(f"  Разом → колонка {day_col}")
     for k, row in ROWS.items():
         total = sum(st[ch][k] for ch in CHANNELS)
-        v = round(total, 2) if k in ("to", "margin") else int(total)
+        v = round(total, 2) if k in ("to", "margin") else int(round(total))
         data.append({"range": f"{tab}!{day_col}{row}", "values": [[v]]})
     sh._service.spreadsheets().values().batchUpdate(
         spreadsheetId=SHEET_ID, body={"valueInputOption": "RAW", "data": data}).execute()
@@ -130,12 +131,13 @@ def write(day: date, st: dict):
 if __name__ == "__main__":
     day = date.fromisoformat(sys.argv[1])
     st = asyncio.run(collect(day))
-    print(f"{'':12}{'ТО':>10}{'Маржа':>10}{'Заявок':>8}{'Продажі':>9}")
+    print(f"{'':12}{'ТО':>10}{'Маржа':>10}{'Заявок':>8}{'Продажі':>9}{'Товарів':>9}")
     for ch in CHANNELS:
         d = st[ch]
-        print(f"{ch:12}{d['to']:>10.2f}{d['margin']:>10.2f}{d['leads']:>8.0f}{d['sales']:>9.0f}")
+        print(f"{ch:12}{d['to']:>10.2f}{d['margin']:>10.2f}{d['leads']:>8.0f}{d['sales']:>9.0f}{d['items']:>9.0f}")
     print(f"{'Разом':12}{sum(st[c]['to'] for c in CHANNELS):>10.2f}{sum(st[c]['margin'] for c in CHANNELS):>10.2f}"
-          f"{sum(st[c]['leads'] for c in CHANNELS):>8.0f}{sum(st[c]['sales'] for c in CHANNELS):>9.0f}")
+          f"{sum(st[c]['leads'] for c in CHANNELS):>8.0f}{sum(st[c]['sales'] for c in CHANNELS):>9.0f}"
+          f"{sum(st[c]['items'] for c in CHANNELS):>9.0f}")
     if "--write" in sys.argv:
         write(day, st)
         print("✅ записано")
