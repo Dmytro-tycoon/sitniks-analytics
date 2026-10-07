@@ -8,6 +8,10 @@ Sitniks-замовлення, оформлене через сайт, має man
 
 Парсимо звідти `Реклама: XXX (fbclid)` як ad_label. Суму беремо з
 totalPriceDiscount (реальна оплачена сума з урахуванням змін після оформлення).
+
+Замовлення з Telegram-бота SKIN-ONE Assistant (ним користуються відвідувачі
+сайту) теж вважаються сайтовими — за каналом продажу в Sitniks. Даних про
+рекламу в них немає, тож вони йдуть окремим рядком BOT_AD_LABEL.
 """
 import re
 from datetime import datetime, timedelta, date
@@ -21,6 +25,8 @@ from src.sitniks.client import SitniksClient
 KIEV_TZ = pytz.timezone("Europe/Kiev")
 
 SITE_MARKER = "Сайт skin-one.com.ua"
+BOT_SALES_CHANNEL = "SKIN-ONE Assistant"
+BOT_AD_LABEL = "Telegram-бот SKIN-ONE Assistant"
 RE_AD = re.compile(r"Реклама:\s*(.+?)\)", re.I)  # до першої `)` — захоплює "...(fbclid" без завершальної
 
 
@@ -35,9 +41,17 @@ def _extract_ad_label(comment: str) -> Optional[str]:
     return m.group(1).strip() + ")"
 
 
-def is_site_order(order: dict) -> bool:
-    """True якщо замовлення оформлене через сайт (за коментарем)."""
+def _has_site_marker(order: dict) -> bool:
     return SITE_MARKER in (order.get("managerComment") or "")
+
+
+def _is_bot_order(order: dict) -> bool:
+    return ((order.get("salesChannel") or {}).get("title") or "").strip() == BOT_SALES_CHANNEL
+
+
+def is_site_order(order: dict) -> bool:
+    """True якщо замовлення з сайту: маркер у коментарі або канал Telegram-бота сайту."""
+    return _has_site_marker(order) or _is_bot_order(order)
 
 
 def parse_site_order(order: dict) -> Optional[Dict]:
@@ -49,8 +63,10 @@ def parse_site_order(order: dict) -> Optional[Dict]:
         return None
     if not is_countable_order(order):
         return None
-    comment = order.get("managerComment") or ""
-    ad_label = _extract_ad_label(comment) or "Без реклами (прямі)"
+    if _has_site_marker(order):
+        ad_label = _extract_ad_label(order.get("managerComment") or "") or "Без реклами (прямі)"
+    else:
+        ad_label = BOT_AD_LABEL
     amount = order.get("totalPriceDiscount")
     if amount is None:
         amount = order.get("totalPrice") or 0
