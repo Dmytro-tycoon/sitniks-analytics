@@ -12,8 +12,8 @@
    - **Сайт** (клієнти оформили на skin-one.com.ua — Sitniks додає `Сайт skin-one.com.ua` в `managerComment`)
 3. Пише:
    - Telegram-звіт у групу «SKIN.ONE замовлення з реклами» — тільки по Instagram Direct
-   - **Аркуш1** — суми по Instagram-рекламах
-   - **Аркуш3 Сайт** — суми по сайт-рекламах
+   - **Інстаграм** (gid 0, до 08.10.2026 — «Аркуш1») — суми по Instagram-рекламах
+   - **Сайт** (gid 1552265568, до 08.10.2026 — «Аркуш3 Сайт») — суми по сайт-рекламах
 
 Обидві таблиці в одному spreadsheet: `1vM6SIydglC0K0b-bZE5woq--2CK-BubXL8yfdnJqweQ` («Ефективність реклами 2»).
 
@@ -39,9 +39,9 @@ Instagram з БД бере `order_date` ∈ {d-1, d} і залишає замо�
 
 ---
 
-## Instagram Direct (Аркуш1)
+## Instagram Direct (вкладка «Інстаграм»)
 
-**Замовлення з сайту сюди НЕ входять** (з 28.09.2026) — вони лише в «Аркуш3 Сайт».
+**Замовлення з сайту сюди НЕ входять** (з 28.09.2026) — вони лише в «Сайт».
 Відсіюються і в `build_ad_report` (Telegram-звіт, `reported_ad_orders`), і при
 записі в лист (старі рядки БД ще містять сайт-замовлення як «Без реклами (прямі)»).
 
@@ -56,7 +56,7 @@ Instagram з БД бере `order_date` ∈ {d-1, d} і залишає замо�
 
 ---
 
-## Сайт (Аркуш3 Сайт)
+## Сайт (вкладка «Сайт»)
 
 Модуль: `src/analyzer/site_orders.py`.
 
@@ -87,7 +87,7 @@ Instagram з БД бере `order_date` ∈ {d-1, d} і залишає замо�
 |---|---|---|
 | 05:30 | daily_analysis_job | Аналіз діалогів менеджерів (Claude) |
 | 05:30 | daily_hair_stats_job | Hair-бренд статистика → окремий Sheet |
-| **08:30** | **send_daily_ads_report** | Telegram-звіт + Аркуш1 + Аркуш3 Сайт |
+| **08:30** | **send_daily_ads_report** | Telegram-звіт + Інстаграм + Сайт |
 | 22:00 | reattribute_yesterday | Ретро-звірка Instagram-адсів (якщо Sitniks довантажив adInfo) |
 | /30хв | scheduler_heartbeat | Просто щоб бачити чи планувальник живий |
 
@@ -116,8 +116,8 @@ from src.sheets.ads_sums import write_daily_sums_to_sheet, write_website_daily_s
 
 async def main():
     d = date(2026, 9, 25)
-    await write_daily_sums_to_sheet(target_date=d)          # Аркуш1
-    await write_website_daily_sums_to_sheet(target_date=d)  # Аркуш3 Сайт
+    await write_daily_sums_to_sheet(target_date=d)          # Інстаграм
+    await write_website_daily_sums_to_sheet(target_date=d)  # Сайт
 
 asyncio.run(main())
 "

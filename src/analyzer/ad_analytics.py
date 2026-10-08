@@ -69,7 +69,7 @@ async def build_ad_report(date_from: datetime, date_to: datetime,
     sitniks = SitniksClient()
     try:
         orders = await sitniks.get_orders_exact(date_from, date_to)
-        # Замовлення з сайту рахуються окремо (site_orders.py, «Аркуш3 Сайт»)
+        # Замовлення з сайту рахуються окремо (site_orders.py, «Сайт»)
         from src.analyzer.site_orders import is_site_order
         orders = [o for o in orders if not is_site_order(o)]
         if countable_only:

@@ -1,7 +1,7 @@
 """
 Google Sheets writer для сум замовлень по рекламних постах.
 
-Схема таблиці (лист "Аркуш1" у Sheet ID = ADS_SHEET_ID):
+Схема таблиці (лист "Інстаграм" у Sheet ID = ADS_SHEET_ID):
     A: Реклама (adTitle)
     B: Всього ₴ (формула =SUM(C{row}:NV{row}))
     C: Січень (label)
@@ -37,7 +37,7 @@ MONTHS_UA = [
     "Липень", "Серпень", "Вересень", "Жовтень", "Листопад", "Грудень",
 ]
 
-SHEET_NAME = "Аркуш1"
+SHEET_NAME = "Інстаграм"
 YEAR = 2026  # Поки хардкод, потім розширимо на 2027 коли треба
 
 # Колонки: A=1(Реклама), B=2(Всього), далі 12*(1 label + 31 дат)
@@ -246,8 +246,8 @@ async def _fetch_current_order_state(target_date: date) -> Tuple[set, set, Dict]
     """
     Поточний стан замовлень навколо target_date у Sitniks:
       - ID замовлень, створених саме в київську добу target_date;
-      - ID, які не йдуть в «Аркуш1»: неврахований статус або оформлені через
-        сайт (ті — в «Аркуш3 Сайт");
+      - ID, які не йдуть в «Інстаграм»: неврахований статус або оформлені через
+        сайт (ті — в «Сайт");
       - актуальні суми {order_id: totalPriceDiscount} — менеджер може змінити
         замовлення вже після ранкового звіту, а в БД лишається стара сума.
     """
@@ -295,7 +295,7 @@ async def write_daily_sums_to_sheet(target_date: Optional[date] = None,
     День — календарна київська доба. Замовлення з неврахованими статусами
     (order_status.py) не рахуються, а суми беруться актуальні — статус і суму перевіряємо в Sitniks на момент запису (у БД він
     не зберігається і може змінитися після звіту). Замовлення з сайту теж
-    відкидаються — вони йдуть лише в «Аркуш3 Сайт".
+    відкидаються — вони йдуть лише в «Сайт".
     """
     from src.analyzer.ad_analytics import NO_AD_LABEL
     from src.database.supabase_client import get_client
@@ -373,12 +373,12 @@ async def write_daily_sums_to_sheet(target_date: Optional[date] = None,
 
 # ─── Website orders sheet ──────────────────────────────────────────────────
 
-WEBSITE_SHEET_NAME = "Аркуш3 Сайт"
+WEBSITE_SHEET_NAME = "Сайт"
 
 
 async def write_website_daily_sums_to_sheet(target_date: Optional[date] = None) -> Dict:
     """
-    Пише суми по сайт-замовленнях у окремий лист "Аркуш3 Сайт".
+    Пише суми по сайт-замовленнях у окремий лист "Сайт".
 
     Джерело: Sitniks orders з коментарем "Сайт skin-one.com.ua" (реальні
     оформлені замовлення з реальними totalPriceDiscount). Реклама парситься

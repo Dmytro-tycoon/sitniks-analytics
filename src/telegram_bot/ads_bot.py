@@ -139,7 +139,7 @@ async def send_daily_ads_report():
     except Exception as e:
         print(f"[ads_bot] Sheet update FAILED: {e}")
 
-    # Пишемо замовлення з сайту у окремий лист "Аркуш3 Сайт"
+    # Пишемо замовлення з сайту у окремий лист "Сайт"
     try:
         from src.sheets.ads_sums import write_website_daily_sums_to_sheet
         result = await write_website_daily_sums_to_sheet(target_date=date_from.date())
