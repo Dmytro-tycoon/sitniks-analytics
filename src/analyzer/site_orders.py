@@ -27,18 +27,30 @@ KIEV_TZ = pytz.timezone("Europe/Kiev")
 SITE_MARKER = "Сайт skin-one.com.ua"
 BOT_SALES_CHANNEL = "SKIN-ONE Assistant"
 BOT_AD_LABEL = "Telegram-бот SKIN-ONE Assistant"
-RE_AD = re.compile(r"Реклама:\s*(.+?)\)", re.I)  # до першої `)` — захоплює "...(fbclid" без завершальної
+RE_AD = re.compile(r"Реклама:\s*([^\n;]+)", re.I)
+CLICK_ID = {"meta": "fbclid", "instagram": "fbclid", "ig": "fbclid", "google": "gclid"}
 
 
 def _extract_ad_label(comment: str) -> Optional[str]:
-    """Витягує `Реклама: ...` з коментаря, повертає з "(fbclid)"."""
+    """Витягує `Реклама: ...` з коментаря, повертає з "(fbclid)" / "(gclid)".
+
+    Сайт інколи пише мітку без click-id («Реклама: meta / … / video_duo_face.
+    Разом 3 815 грн») — тоді дописуємо його за джерелом, щоб замовлення
+    потрапило в той самий рядок, що й мітка з "(fbclid)".
+    """
     if not comment:
         return None
     m = RE_AD.search(comment)
     if not m:
         return None
-    # Group captures "meta / ... / catalog (fbclid" — додаємо закриту дужку
-    return m.group(1).strip() + ")"
+    text = m.group(1)
+    if ")" in text:
+        return text[:text.index(")") + 1].strip()
+    label = re.split(r"\.\s*Разом", text)[0].strip().rstrip(".").strip()
+    if not label:
+        return None
+    click = CLICK_ID.get(label.split("/")[0].strip().lower())
+    return f"{label} ({click})" if click else label
 
 
 def _has_site_marker(order: dict) -> bool:
