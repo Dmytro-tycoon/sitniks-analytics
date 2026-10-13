@@ -21,6 +21,7 @@ import glob
 import os
 import re
 import sys
+from difflib import SequenceMatcher
 from datetime import date, datetime, timedelta, timezone
 
 import openpyxl
@@ -44,6 +45,20 @@ _SKEL = str.maketrans({
 })
 
 
+_LAT = [("shch", "щ"), ("zh", "ж"), ("kh", "х"), ("ts", "ц"), ("ch", "ч"), ("sh", "ш"), ("yu", "ю"), ("ya", "я"),
+        ("ye", "є"), ("yi", "ї"), ("a", "а"), ("b", "б"), ("v", "в"), ("h", "г"), ("g", "г"), ("d", "д"), ("e", "е"),
+        ("z", "з"), ("y", "и"), ("i", "і"), ("k", "к"), ("l", "л"), ("m", "м"), ("n", "н"), ("o", "о"), ("p", "п"),
+        ("r", "р"), ("s", "с"), ("t", "т"), ("u", "у"), ("f", "ф")]
+
+
+def translit(s: str) -> str:
+    """VALENTYNA KOTSURA → валентина коцура (переказ з картки — ім'я латиницею)."""
+    s = s.lower()
+    for lat, cyr in _LAT:
+        s = s.replace(lat, cyr)
+    return s
+
+
 def skel(s: str) -> str:
     s = (s or "").lower().translate(_SKEL)
     s = s.replace("ая", "а").replace("ска", "ска")  # Кухаревская ≈ Кухаревська
@@ -59,9 +74,11 @@ def name_match(client: str, payer: str, purpose: str = "") -> bool:
     """Прізвище платника (перше слово у виписці) ≈ будь-якому слову з ПІБ клієнта (у Sitniks порядок довільний).
     Запасний варіант: прізвище клієнта (≥5 літер) трапляється в призначенні платежу («крем_чепак маряна»)."""
     payer = re.sub(r"^(ФОП|ТОВ)\s+", "", (payer or "").strip(), flags=re.I)
-    ps = surname(payer)[:5]
+    ps = surname(payer)
     tokens = [skel(t) for t in re.split(r"[\s,.]+", client or "") if len(skel(t)) >= 3]
-    if len(ps) >= 3 and any(t[:5] == ps for t in tokens):
+    # схожість цілих слів, а не лише початку: «Олексюк» ≠ «Олександра», але «Хапайло» ≈ «Харайло»
+    if len(ps) >= 3 and any(t == ps or (min(len(t), len(ps)) >= 5 and SequenceMatcher(None, t, ps).ratio() >= 0.8)
+                            for t in tokens):
         return True
     if not purpose or payer != purpose:  # запасний варіант лише коли ПІБ платника не вдалося виділити
         return False
@@ -91,6 +108,10 @@ def parse_statement(path: str):
         if "Транз.рахунок" in counterparty or counterparty.startswith("ТОВ"):
             m = re.search(r"вiд ([^,]+)", purpose) or re.search(r",\s*([^,]+)$", purpose)
             payer = m.group(1).strip() if m else purpose
+        m = re.search(r"Зарахування переказу:\s*([A-Z][A-Z' -]+)$", purpose.strip())
+        if m:  # «… Зарахування переказу: VALENTYNA KOTSURA» → «коцура валентина» (прізвище першим)
+            parts = translit(m.group(1)).split()
+            payer = " ".join(parts[::-1])
         m = re.search(r"(\+?\d[\d\s]{8,})", purpose)
         out.append({
             "acct": owner, "dt": f"{r[1]} {str(r[2])[:5]}", "amount": amount,
