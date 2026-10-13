@@ -148,22 +148,28 @@ def match(orders, payments):
         else:
             todo.append(rec)
 
-    def take(rec, pred, bucket):
-        cands = [p for p in payments if not p["used"] and pred(rec, p)]
-        # найближчий за датою; при рівності — платіж того ж дня або пізніше
-        for pay in sorted(cands, key=lambda p: (abs((p["date"] - rec["day"]).days), p["date"] < rec["day"]))[:1]:
-                pay["used"] = True
-                res[bucket].append((rec, pay))
-                return True
-        return False
-
     close = lambda rec, pay: abs(pay["amount"] - rec["expected"]) <= TOLERANCE
     by_phone = lambda rec, pay: pay["phone"] and pay["phone"] == phone9(rec["phone"]) and close(rec, pay)
     by_name = lambda rec, pay: name_match(rec["client"], pay["payer"], pay["purpose"]) and close(rec, pay)
     name_only = lambda rec, pay: name_match(rec["client"], pay["payer"], pay["purpose"]) or (pay["phone"] and pay["phone"] == phone9(rec["phone"]))
+    def assign(left, pred, bucket):
+        """Усі можливі пари (замовлення, платіж) → спершу найближчі за датою, щоб у клієнтки з кількома
+        замовленнями платіж дістався замовленню свого дня, а не сусіднього."""
+        pairs = sorted(((abs((p["date"] - r["day"]).days), p["date"] < r["day"], i, j)
+                        for i, r in enumerate(left) for j, p in enumerate(payments)
+                        if not p["used"] and pred(r, p)))
+        done = set()
+        for _, _, i, j in pairs:
+            if i in done or payments[j]["used"]:
+                continue
+            payments[j]["used"] = True
+            done.add(i)
+            res[bucket].append((left[i], payments[j]))
+        return [r for i, r in enumerate(left) if i not in done]
+
     left = todo
     for pred, bucket in ((by_phone, "ok"), (by_name, "ok"), (name_only, "sum_diff")):
-        left = [r for r in left if not take(r, pred, bucket)]
+        left = assign(left, pred, bucket)
     # однакова сума, інший платник — лише якщо такий вільний платіж єдиний
     still = []
     for rec in left:
