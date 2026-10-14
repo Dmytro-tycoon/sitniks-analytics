@@ -1,3 +1,4 @@
+import os
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from datetime import datetime, timedelta
@@ -98,12 +99,15 @@ def setup_scheduler() -> AsyncIOScheduler:
         id="daily_ads_reattribution",
         replace_existing=True,
     )
-    scheduler.add_job(
-        daily_hair_stats_job,
-        CronTrigger(hour=5, minute=30, timezone=KIEV_TZ),
-        id="daily_hair_stats",
-        replace_existing=True,
-    )
+    # Статистика skin.one.hair вимкнена (рішення користувача 14.10.2026): таблицю волосся
+    # не перезаписуємо. Увімкнути: ENABLE_HAIR_STATS=1 у змінних Railway.
+    if os.getenv("ENABLE_HAIR_STATS") == "1":
+        scheduler.add_job(
+            daily_hair_stats_job,
+            CronTrigger(hour=5, minute=30, timezone=KIEV_TZ),
+            id="daily_hair_stats",
+            replace_existing=True,
+        )
     # daily_ads_sheet_job більше НЕ окремим cron — write_daily_sums_to_sheet
     # тепер викликається інлайн наприкінці send_daily_ads_report (08:30),
     # щоб уникнути конкуренції за Sitniks API rate-limit.
