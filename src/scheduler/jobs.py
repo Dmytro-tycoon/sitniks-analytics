@@ -81,15 +81,19 @@ def setup_scheduler() -> AsyncIOScheduler:
         "coalesce": True,
     }
     scheduler = AsyncIOScheduler(timezone=KIEV_TZ, job_defaults=job_defaults)
-    scheduler.add_job(
-        daily_analysis_job,
-        CronTrigger(hour=5, minute=30, timezone=KIEV_TZ),
-        id="daily_analysis",
-        replace_existing=True,
-    )
+    # Щоденний аналіз переписок тимчасово призупинено (рішення користувача 14.10.2026).
+    # Увімкнути: ENABLE_DAILY_ANALYSIS=1 у змінних Railway.
+    if os.getenv("ENABLE_DAILY_ANALYSIS") == "1":
+        scheduler.add_job(
+            daily_analysis_job,
+            CronTrigger(hour=5, minute=30, timezone=KIEV_TZ),
+            id="daily_analysis",
+            replace_existing=True,
+        )
+    # Звіт по рекламі — о 05:20 (з 14.10.2026; раніше 08:30)
     scheduler.add_job(
         send_daily_ads_report,
-        CronTrigger(hour=8, minute=30, timezone=KIEV_TZ),
+        CronTrigger(hour=5, minute=20, timezone=KIEV_TZ),
         id="daily_ads_report",
         replace_existing=True,
     )
@@ -109,7 +113,7 @@ def setup_scheduler() -> AsyncIOScheduler:
             replace_existing=True,
         )
     # daily_ads_sheet_job більше НЕ окремим cron — write_daily_sums_to_sheet
-    # тепер викликається інлайн наприкінці send_daily_ads_report (08:30),
+    # тепер викликається інлайн наприкінці send_daily_ads_report (05:20),
     # щоб уникнути конкуренції за Sitniks API rate-limit.
     # Heartbeat: пише в лог кожні 30 хв — щоб бачити чи планувальник живий
     from apscheduler.triggers.interval import IntervalTrigger
