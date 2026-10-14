@@ -35,6 +35,7 @@ DEFAULT_DIR = os.path.expanduser(
     "~/Library/Mobile Documents/com~apple~CloudDocs/Documents/Skin.One/Виписки")
 SKIP_STATUSES = {"Відмінено", "Відмовилась"}
 TOLERANCE = 2.0  # округлення копійок (1039.5 → 1040)
+MAX_DAYS = 2      # платіж шукаємо не далі ніж ±2 дні від дати замовлення
 
 # Українські / російські / латинські варіанти літер → спільний «скелет»
 _SKEL = str.maketrans({
@@ -148,10 +149,12 @@ def match(orders, payments):
         else:
             todo.append(rec)
 
-    close = lambda rec, pay: abs(pay["amount"] - rec["expected"]) <= TOLERANCE
+    near = lambda rec, pay: abs((pay["date"] - rec["day"]).days) <= MAX_DAYS
+    close = lambda rec, pay: abs(pay["amount"] - rec["expected"]) <= TOLERANCE and near(rec, pay)
     by_phone = lambda rec, pay: pay["phone"] and pay["phone"] == phone9(rec["phone"]) and close(rec, pay)
     by_name = lambda rec, pay: name_match(rec["client"], pay["payer"], pay["purpose"]) and close(rec, pay)
-    name_only = lambda rec, pay: name_match(rec["client"], pay["payer"], pay["purpose"]) or (pay["phone"] and pay["phone"] == phone9(rec["phone"]))
+    name_only = lambda rec, pay: near(rec, pay) and (name_match(rec["client"], pay["payer"], pay["purpose"])
+                                                      or (pay["phone"] and pay["phone"] == phone9(rec["phone"])))
     def assign(left, pred, bucket):
         """Усі можливі пари (замовлення, платіж) → спершу найближчі за датою, щоб у клієнтки з кількома
         замовленнями платіж дістався замовленню свого дня, а не сусіднього."""
@@ -227,8 +230,17 @@ def main():
             if key not in seen:  # виписки за періоди, що перетинаються
                 seen.add(key)
                 payments.append(p)
-    orders = asyncio.run(load_orders(d1, d2))
-    report(d1, d2, match(orders, payments), len(payments))
+    # замовлення за 2 дні до періоду теж зіставляємо (щоб їхні платежі не висіли як «без замовлення»),
+    # але у звіті показуємо лише період; платежі — лише з дат d1−1 … d2+1
+    orders = asyncio.run(load_orders(d1 - timedelta(days=2), d2))
+    payments = [p for p in payments if d1 - timedelta(days=1) <= p["date"] <= d2 + timedelta(days=1)]
+    res = match(orders, payments)
+    inside = lambda r: d1 <= r["day"] <= d2
+    for k in ("ok", "sum_diff", "other_payer"):
+        res[k] = [(r, p) for r, p in res[k] if inside(r)]
+    for k in ("unpaid", "cod_only", "skipped"):
+        res[k] = [r for r in res[k] if inside(r)]
+    report(d1, d2, res, len(payments))
 
 
 if __name__ == "__main__":
