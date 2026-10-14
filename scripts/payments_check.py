@@ -170,9 +170,24 @@ def match(orders, payments):
             res[bucket].append((left[i], payments[j]))
         return [r for i, r in enumerate(left) if i not in done]
 
+    def split(left):
+        """Оплата кількома платежами від тієї ж людини (3 155 + 374 = 3 529 за замовлення на 3 528)."""
+        rest = []
+        for r in left:
+            parts = [p for p in payments if not p["used"] and name_only(r, p)]
+            if len(parts) >= 2 and abs(sum(p["amount"] for p in parts) - r["expected"]) <= TOLERANCE:
+                for p in parts:
+                    p["used"] = True
+                res["ok"].append((r, parts[0]))
+            else:
+                rest.append(r)
+        return rest
+
     left = todo
-    for pred, bucket in ((by_phone, "ok"), (by_name, "ok"), (name_only, "sum_diff")):
+    for pred, bucket in ((by_phone, "ok"), (by_name, "ok")):
         left = assign(left, pred, bucket)
+    left = split(left)
+    left = assign(left, name_only, "sum_diff")
     # однакова сума, інший платник — лише якщо такий вільний платіж єдиний
     still = []
     for rec in left:
@@ -196,7 +211,7 @@ def report(d1, d2, res, n_pay):
     period = f"{d1:%d.%m}" if d1 == d2 else f"{d1:%d.%m}–{d2:%d.%m.%Y}"
     late = [(r, p) for r, p in ok if p["date"] != r["day"]]
     print(f"Звірка оплат за {period}: платежів у виписках {n_pay}, замовлень з передоплатою "
-          f"{len(ok) + len(res['sum_diff']) + len(res['other_payer']) + len(res['unpaid'])}")
+          f"{len(ok) + len(res['sum_diff']) + len(res['other_payer']) + len(res['unpaid']) + len(res.get('confirmed', []))}")
     print(f"✅ Оплачено (збіг ПІБ/телефону і суми): {len(ok)}"
           + (f", з них {len(late)} оплатою з іншого дня" if late else ""))
     if res["other_payer"]:
@@ -214,15 +229,13 @@ def report(d1, d2, res, n_pay):
         print(f"\n❓ Платежі без замовлення за цей день ({len(res['unknown_payments'])}) — можливо, за інший день:")
         for p in res["unknown_payments"]:
             print(f"  {fmt(p['amount'])} ₴ — {p['payer']} ({p['acct']}, {p['dt']}) «{p['purpose'][:50]}»")
+    if res.get("confirmed"):
+        print(f"\n☑️ Підтверджено вручну раніше: {len(res['confirmed'])}")
     print(f"\nℹ️ Без передоплати (лише накладений платіж): {len(res['cod_only'])}; "
           f"пропущено (відмінено/відмова): {len(res['skipped'])}")
 
 
-def main():
-    args = sys.argv[1:]
-    d1 = date.fromisoformat(args.pop(0)) if args else date.today() - timedelta(days=1)
-    d2 = date.fromisoformat(args.pop(0)) if args and re.match(r"\d{4}-\d\d-\d\d$", args[0]) else d1
-    folder = args[0] if args else DEFAULT_DIR
+def load_payments(folder: str = DEFAULT_DIR):
     seen, payments = set(), []
     for f in sorted(glob.glob(os.path.join(folder, "*.xlsx"))):
         for p in parse_statement(f):
@@ -230,17 +243,52 @@ def main():
             if key not in seen:  # виписки за періоди, що перетинаються
                 seen.add(key)
                 payments.append(p)
+    return payments
+
+
+def check(d1: date, d2: date, folder: str = DEFAULT_DIR, confirmed=(), resolved_payments=()):
+    """confirmed — № замовлень, які користувач підтвердив вручну (оплата на інший рахунок, квитанція);
+    resolved_payments — [{"date": "13.10.2026", "amount": 1915}] — платежі, вже пояснені вручну."""
+    payments = load_payments(folder)
     # замовлення за 2 дні до періоду теж зіставляємо (щоб їхні платежі не висіли як «без замовлення»),
     # але у звіті показуємо лише період; платежі — лише з дат d1−1 … d2+1
     orders = asyncio.run(load_orders(d1 - timedelta(days=2), d2))
     payments = [p for p in payments if d1 - timedelta(days=1) <= p["date"] <= d2 + timedelta(days=1)]
     res = match(orders, payments)
     inside = lambda r: d1 <= r["day"] <= d2
+    conf = {str(x) for x in confirmed}
+    res["confirmed"] = []
     for k in ("ok", "sum_diff", "other_payer"):
-        res[k] = [(r, p) for r, p in res[k] if inside(r)]
+        keep = []
+        for r, p in res[k]:
+            if not inside(r):
+                continue
+            if k != "ok" and str(r["n"]) in conf:
+                res["confirmed"].append(r)
+            else:
+                keep.append((r, p))
+        res[k] = keep
     for k in ("unpaid", "cod_only", "skipped"):
-        res[k] = [r for r in res[k] if inside(r)]
-    report(d1, d2, res, len(payments))
+        rows = [r for r in res[k] if inside(r)]
+        if k == "unpaid":
+            res["confirmed"] += [r for r in rows if str(r["n"]) in conf]
+            rows = [r for r in rows if str(r["n"]) not in conf]
+        res[k] = rows
+    res["unknown_payments"] = [p for p in res["unknown_payments"]
+                               if not any(p["dt"].startswith(x["date"]) and abs(p["amount"] - x["amount"]) < 0.01
+                                          and skel(x.get("payer", "")) in skel(p["payer"] + p["purpose"])
+                                          for x in resolved_payments)]
+    res["n_payments"] = len(payments)
+    return res
+
+
+def main():
+    args = sys.argv[1:]
+    d1 = date.fromisoformat(args.pop(0)) if args else date.today() - timedelta(days=1)
+    d2 = date.fromisoformat(args.pop(0)) if args and re.match(r"\d{4}-\d\d-\d\d$", args[0]) else d1
+    folder = args[0] if args else DEFAULT_DIR
+    res = check(d1, d2, folder)
+    report(d1, d2, res, res["n_payments"])
 
 
 if __name__ == "__main__":

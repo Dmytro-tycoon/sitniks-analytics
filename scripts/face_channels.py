@@ -62,7 +62,11 @@ def site_channel(comment: str) -> str:
     return "Сайт прямі"  # без мітки реклами
 
 
-async def collect(day: date) -> dict:
+async def collect(day: date, site_overrides: dict = None) -> dict:
+    """site_overrides: {order_id: канал} — рішення користувача по окремих замовленнях
+    (config/morning_overrides.json → rnp_site_channel), напр. «без UTM (fbclid)» → «Сайт ФБ».
+    У st["_orders"][канал] — {№ замовлення: сума} врахованих продажів (для звіту змін)."""
+    site_overrides = {str(k): v for k, v in (site_overrides or {}).items()}
     s = SitniksClient()
     a = KIEV.localize(datetime(day.year, day.month, day.day))
     b = a + timedelta(days=1)
@@ -72,6 +76,7 @@ async def collect(day: date) -> dict:
     new_chats = await s.get_all_chats(a.astimezone(pytz.utc), b.astimezone(pytz.utc), by_first_message=True)
 
     st = {c: defaultdict(float) for c in CHANNELS}
+    st["_orders"] = {c: {} for c in CHANNELS}
     new_ids = set()
     for c in new_chats:
         ch = CHAT_CHANNEL.get((c.get("ownerName"), c.get("initialSource")), DEFAULT_CHANNEL)
@@ -82,7 +87,7 @@ async def collect(day: date) -> dict:
     for o in orders:
         comment = o.get("managerComment") or ""
         if SITE_PREFIX in comment:  # менеджер може дописати нотатку на початку
-            ch = site_channel(comment)
+            ch = site_overrides.get(str(o.get("id"))) or site_channel(comment)
             st[ch]["leads"] += 1
         else:
             cid = o.get("chatId")
@@ -106,6 +111,7 @@ async def collect(day: date) -> dict:
         st[ch]["sales"] += 1
         st[ch]["repeat"] += repeat_clients.is_repeat(o, index)
         st[ch]["items"] += sum(float(p.get("quantity") or 1) for p in o.get("products", []))
+        st["_orders"][ch][str(o.get("orderNumber") or o.get("id"))] = round(to, 2)
     # покупки дня → в індекс (перші покупки нових клієнтів)
     if repeat_clients.update_index(index, orders):
         repeat_clients.save_index(index)
@@ -128,7 +134,8 @@ def fetch_site_ads(day: date) -> dict:
     return out
 
 
-def write(day: date, st: dict, ads: dict):
+def write(day: date, st: dict, ads: dict, skip_ad_channels=()):
+    """skip_ad_channels — канали, чиї 55/57/58 введені вручну (зі скрінів кабінету): не перезаписуємо."""
     sh = SheetsClient(settings.GOOGLE_SERVICE_ACCOUNT_FILE, SHEET_ID)
     tab = f"'РНП День ({MONTHS[day.month]})'"
     hdr = sh._service.spreadsheets().values().get(
@@ -149,6 +156,8 @@ def write(day: date, st: dict, ads: dict):
             data.append({"range": f"{tab}!{col}{row}", "values": [[v]]})
     # Реклама сайту (55/57/58) — лише колонки «Сайт ФБ» / «Сайт Гугл»
     for ch, vals in ads.items():
+        if ch in skip_ad_channels:
+            continue
         idx = next(i for i in window if 0 <= i < len(names) and names[i] == ch)
         col = sh._col_index_to_letter(idx)
         for k, row in AD_ROWS.items():
