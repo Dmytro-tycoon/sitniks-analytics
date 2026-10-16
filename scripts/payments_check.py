@@ -198,6 +198,15 @@ def match(orders, payments):
         else:
             still.append(rec)
     res["unpaid"] = still
+    # Замовлення без передоплати в Sitniks, але від тієї ж людини прийшли гроші на рахунок →
+    # ризик подвійної оплати (накладений платіж піде в ТТН). Напр. №17923 Ципій: 1 500 + 2 815,20.
+    res["cod_paid"] = []
+    for r in res["cod_only"]:
+        parts = [p for p in payments if not p["used"] and name_only(r, p)]
+        if parts:
+            for p in parts:
+                p["used"] = True
+            res["cod_paid"].append((r, parts))
     res["unknown_payments"] = [p for p in payments if not p["used"]]
     return res
 
@@ -222,6 +231,9 @@ def report(d1, d2, res, n_pay):
         print(f"\n🟠 Платник той самий, сума інша ({len(res['sum_diff'])}):")
         for r, p in res["sum_diff"]:
             print(f"  №{r['n']} {r['client']}: очікувалось {fmt(r['expected'])} ₴, надійшло {fmt(p['amount'])} ₴ ({p['acct']}, {p['dt']})")
+    for r, ps in res.get("cod_paid", []):
+        print(f"\n⚠️ №{r['n']} {r['client']}: у Sitniks без передоплати (накладений {fmt(r['total'])} ₴), "
+              f"але надійшло {fmt(sum(p['amount'] for p in ps))} ₴ ({', '.join(p['dt'] for p in ps)}) — виправити, щоб не було подвійної оплати")
     print(f"\n❌ Не знайдено оплату ({len(res['unpaid'])}):")
     for r in sorted(res["unpaid"], key=lambda r: (r["day"], r["n"])):
         print(f"  {r['day']:%d.%m} №{r['n']} {r['client']} {r['phone']} — {fmt(r['expected'])} ₴ (усього {fmt(r['total'])} ₴, {r['status']})")
@@ -258,6 +270,7 @@ def check(d1: date, d2: date, folder: str = DEFAULT_DIR, confirmed=(), resolved_
     inside = lambda r: d1 <= r["day"] <= d2
     conf = {str(x) for x in confirmed}
     res["confirmed"] = []
+    res["cod_paid"] = [(r, ps) for r, ps in res["cod_paid"] if inside(r)]
     for k in ("ok", "sum_diff", "other_payer"):
         keep = []
         for r, p in res[k]:

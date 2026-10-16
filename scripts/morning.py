@@ -158,6 +158,9 @@ def payments(d1, d2, ov):
         print(f"  🟡 №{r['n']} {r['client']} {money(r['expected'])} ← {p['payer']} ({p['dt']})")
     for r, p in res["sum_diff"]:
         print(f"  🟠 №{r['n']} {r['client']}: треба {money(r['expected'])}, прийшло {money(p['amount'])} ({p['dt']})")
+    for r, ps in res.get("cod_paid", []):
+        print(f"  ⚠️ №{r['n']} {r['client']}: у Sitniks без передоплати (накладений {money(r['total'])}), "
+              f"а надійшло {money(sum(p['amount'] for p in ps))} ₴ — подвійна оплата?")
     for r in sorted(res["unpaid"], key=lambda r: (r["day"], r["n"])):
         print(f"  ❌ {r['day']:%d.%m} №{r['n']} {r['client']} {r['phone']} — {money(r['expected'])} ₴ ({r['status']})")
     for p in res["unknown_payments"]:
