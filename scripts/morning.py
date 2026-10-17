@@ -5,7 +5,7 @@
 
 Блоки:
   rnp — РНП «Рука на пульсі» (scripts/face_channels.py) за D-(days-1)…D;
-  ads — «Ефективність реклами 2»: вкладка «Сайт» за D-(days-1)…D, «Інстаграм» за D-2…D;
+  ads — «Ефективність реклами 2»: вкладка «Сайт» за D-(days-1)…D, «Інстаграм» за D-1…D;
   pay — звірка передоплат з виписками ПриватБанку (scripts/payments_check.py) за D-(days-1)…D.
 
 Ручні рішення користувача — config/morning_overrides.json (винятки каналів, витрати зі скрінів,
@@ -202,8 +202,8 @@ def main():
         for d in days:
             time.sleep(SHEETS_PAUSE if "rnp" in blocks or d != days[0] else 0)
             state["site"][d.isoformat()] = site_tab_day(d, state["site"].get(d.isoformat()), a.dry)
-        # «Інстаграм»: учора + перевірка 2 попередніх днів (замовлення підтверджують із запізненням)
-        for d in [a.date - timedelta(days=i) for i in (2, 1, 0)]:
+        # «Інстаграм»: учора + перевірка позавчора (замовлення підтверджують із запізненням)
+        for d in [a.date - timedelta(days=i) for i in (1, 0)]:
             time.sleep(SHEETS_PAUSE)
             state["insta"][d.isoformat()] = insta_tab_day(d, state["insta"].get(d.isoformat()), a.dry)
     if "pay" in blocks:
