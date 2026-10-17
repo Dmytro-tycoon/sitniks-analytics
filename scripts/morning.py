@@ -149,22 +149,29 @@ def insta_tab_day(day, prev, dry):
 
 
 # ─── Оплати ──────────────────────────────────────────────────────────────
-def payments(d1, d2, ov):
-    res = retry(pc.check, d1, d2, pc.DEFAULT_DIR, ov.get("payments_confirmed", []), ov.get("payments_resolved", []))
+def payments(d1, d2, ov, prev_state):
+    """Повертає новий стан звірки (передоплати, відкриті неоплачені) для data/morning_state.json."""
+    res = retry(pc.check, d1, d2, pc.DEFAULT_DIR, ov.get("payments_confirmed", []), ov.get("payments_resolved", []),
+                prev_state)
     n = len(res["ok"]) + len(res["sum_diff"]) + len(res["other_payer"]) + len(res["unpaid"]) + len(res["confirmed"])
     print(f" Передоплат {n}: ✅ {len(res['ok'])}, ☑️ підтверджено вручну {len(res['confirmed'])}, "
           f"накладений платіж {len(res['cod_only'])}")
     for r, p in res["other_payer"]:
         print(f"  🟡 №{r['n']} {r['client']} {money(r['expected'])} ← {p['payer']} ({p['dt']})")
-    for r, p in res["sum_diff"]:
+    for r, p in res["sum_diff"]:  # noqa
         print(f"  🟠 №{r['n']} {r['client']}: треба {money(r['expected'])}, прийшло {money(p['amount'])} ({p['dt']})")
     for r, ps in res.get("cod_paid", []):
         print(f"  ⚠️ №{r['n']} {r['client']}: у Sitniks без передоплати (накладений {money(r['total'])}), "
               f"а надійшло {money(sum(p['amount'] for p in ps))} ₴ — подвійна оплата?")
+    for r, p in res.get("recovered", []):
+        print(f"  ✅ раніше без оплати №{r['n']} {r['client']} {money(r['expected'])} ← {p['payer']} ({p['dt']})")
     for r in sorted(res["unpaid"], key=lambda r: (r["day"], r["n"])):
-        print(f"  ❌ {r['day']:%d.%m} №{r['n']} {r['client']} {r['phone']} — {money(r['expected'])} ₴ ({r['status']})")
+        note = (" — передоплату змінено в Sitniks" if str(r["n"]) in res.get("changed", ())
+                else " — з минулих днів" if r.get("ext") else "")
+        print(f"  ❌ {r['day']:%d.%m}{note} №{r['n']} {r['client']} {r['phone']} — {money(r['expected'])} ₴ ({r['status']})")
     for p in res["unknown_payments"]:
         print(f"  ❓ {money(p['amount'])} ₴ {p['payer']} ({p['acct'].split()[1] if ' ' in p['acct'] else p['acct']}, {p['dt']})")
+    return res["state"]
 
 
 def main():
@@ -194,12 +201,12 @@ def main():
             state["site"][d.isoformat()] = site_tab_day(d, state["site"].get(d.isoformat()), a.dry)
         time.sleep(SHEETS_PAUSE)
         state["insta"][a.date.isoformat()] = insta_tab_day(a.date, state["insta"].get(a.date.isoformat()), a.dry)
+    if "pay" in blocks:
+        print(f"Оплати {days[0]:%d.%m}–{days[-1]:%d.%m}")
+        state["pay"] = payments(days[0], days[-1], ov, state.get("pay"))
     if not a.dry:
         STATE.parent.mkdir(parents=True, exist_ok=True)
         STATE.write_text(json.dumps(state, ensure_ascii=False, indent=1))
-    if "pay" in blocks:
-        print(f"Оплати {days[0]:%d.%m}–{days[-1]:%d.%m}")
-        payments(days[0], days[-1], ov)
 
 
 if __name__ == "__main__":

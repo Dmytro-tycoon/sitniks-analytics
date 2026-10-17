@@ -36,6 +36,7 @@ DEFAULT_DIR = os.path.expanduser(
 SKIP_STATUSES = {"Відмінено", "Відмовилась"}
 TOLERANCE = 2.0  # округлення копійок (1039.5 → 1040)
 MAX_DAYS = 2      # платіж шукаємо не далі ніж ±2 дні від дати замовлення
+LOOKBACK = 10     # старі замовлення (до періоду), за якими стежимо: ще не оплачені або змінили передоплату
 
 # Українські / російські / латинські варіанти літер → спільний «скелет»
 _SKEL = str.maketrans({
@@ -133,14 +134,17 @@ def kyiv_day(iso: str) -> date:
     return (datetime.fromisoformat(iso.replace("Z", "+00:00")) + timedelta(hours=3)).date()
 
 
-def match(orders, payments):
+def match(orders, payments, extended=frozenset()):
+    """extended — № старих замовлень, для яких платіж шукаємо будь-коли після дати замовлення
+    (неоплачені з минулих звітів або ті, де передоплату внесли/змінили пізніше)."""
     res = {"ok": [], "sum_diff": [], "other_payer": [], "unpaid": [], "cod_only": [], "skipped": []}
     todo = []
     for o in orders:
         st = status_title(o)
         p = (o.get("payment") or {}).get("amount")
         c = o.get("client") or {}
-        rec = {"n": o.get("orderNumber") or o["id"], "status": st, "day": kyiv_day(o["createdAt"]), "client": (c.get("fullname") or "").strip(" ,"),
+        n = o.get("orderNumber") or o["id"]
+        rec = {"n": n, "ext": str(n) in extended, "status": st, "day": kyiv_day(o["createdAt"]), "client": (c.get("fullname") or "").strip(" ,"),
                "phone": c.get("phone") or "", "total": o.get("totalPriceDiscount"), "expected": float(p or 0)}
         if st in SKIP_STATUSES:
             res["skipped"].append(rec)
@@ -149,7 +153,8 @@ def match(orders, payments):
         else:
             todo.append(rec)
 
-    near = lambda rec, pay: abs((pay["date"] - rec["day"]).days) <= MAX_DAYS
+    near = lambda rec, pay: ((pay["date"] - rec["day"]).days >= -1 if rec["ext"]
+                             else abs((pay["date"] - rec["day"]).days) <= MAX_DAYS)
     close = lambda rec, pay: abs(pay["amount"] - rec["expected"]) <= TOLERANCE and near(rec, pay)
     by_phone = lambda rec, pay: pay["phone"] and pay["phone"] == phone9(rec["phone"]) and close(rec, pay)
     by_name = lambda rec, pay: name_match(rec["client"], pay["payer"], pay["purpose"]) and close(rec, pay)
@@ -236,7 +241,7 @@ def report(d1, d2, res, n_pay):
               f"але надійшло {fmt(sum(p['amount'] for p in ps))} ₴ ({', '.join(p['dt'] for p in ps)}) — виправити, щоб не було подвійної оплати")
     print(f"\n❌ Не знайдено оплату ({len(res['unpaid'])}):")
     for r in sorted(res["unpaid"], key=lambda r: (r["day"], r["n"])):
-        print(f"  {r['day']:%d.%m} №{r['n']} {r['client']} {r['phone']} — {fmt(r['expected'])} ₴ (усього {fmt(r['total'])} ₴, {r['status']})")
+        print(f"  {r['day']:%d.%m}{' (з минулих днів)' if r.get('ext') else ''} №{r['n']} {r['client']} {r['phone']} — {fmt(r['expected'])} ₴ (усього {fmt(r['total'])} ₴, {r['status']})")
     if res["unknown_payments"]:
         print(f"\n❓ Платежі без замовлення за цей день ({len(res['unknown_payments'])}) — можливо, за інший день:")
         for p in res["unknown_payments"]:
@@ -258,31 +263,41 @@ def load_payments(folder: str = DEFAULT_DIR):
     return payments
 
 
-def check(d1: date, d2: date, folder: str = DEFAULT_DIR, confirmed=(), resolved_payments=()):
+def check(d1: date, d2: date, folder: str = DEFAULT_DIR, confirmed=(), resolved_payments=(), prev_state=None):
     """confirmed — № замовлень, які користувач підтвердив вручну (оплата на інший рахунок, квитанція);
-    resolved_payments — [{"date": "13.10.2026", "amount": 1915}] — платежі, вже пояснені вручну."""
+    resolved_payments — [{"date": "13.10.2026", "amount": 1915}] — платежі, вже пояснені вручну;
+    prev_state — {"prepay": {№: сума}, "open_unpaid": [№]} з попереднього запуску (morning.py).
+    Старі замовлення (до d1, за LOOKBACK днів) потрапляють у звіт, якщо були неоплачені минулого разу
+    або в них змінилась передоплата (напр. №17872: передоплату 200 внесли через 3 дні, разом з оплатою)."""
     payments = load_payments(folder)
-    # замовлення за 2 дні до періоду теж зіставляємо (щоб їхні платежі не висіли як «без замовлення»),
-    # але у звіті показуємо лише період; платежі — лише з дат d1−1 … d2+1
-    orders = asyncio.run(load_orders(d1 - timedelta(days=2), d2))
+    orders = asyncio.run(load_orders(d1 - timedelta(days=LOOKBACK), d2))
     payments = [p for p in payments if d1 - timedelta(days=1) <= p["date"] <= d2 + timedelta(days=1)]
-    res = match(orders, payments)
-    inside = lambda r: d1 <= r["day"] <= d2
     conf = {str(x) for x in confirmed}
-    res["confirmed"] = []
+    prev = prev_state or {}
+    prev_prepay, prev_open = prev.get("prepay", {}), {str(x) for x in prev.get("open_unpaid", [])}
+    prepay = {str(o.get("orderNumber") or o["id"]): float((o.get("payment") or {}).get("amount") or 0) for o in orders}
+    old = {str(o.get("orderNumber") or o["id"]) for o in orders if kyiv_day(o["createdAt"]) < d1}
+    changed = {n for n in old if n in prev_prepay and prepay[n] > 0 and abs(prev_prepay[n] - prepay[n]) > 0.01}
+    extended = ((prev_open & old) | changed) - conf
+    res = match(orders, payments, extended)
+    inside = lambda r: d1 <= r["day"] <= d2
+    scope = lambda r: inside(r) or str(r["n"]) in extended
+    res["confirmed"], res["recovered"], res["changed"] = [], [], changed
     res["cod_paid"] = [(r, ps) for r, ps in res["cod_paid"] if inside(r)]
     for k in ("ok", "sum_diff", "other_payer"):
         keep = []
         for r, p in res[k]:
-            if not inside(r):
+            if not scope(r):
                 continue
             if k != "ok" and str(r["n"]) in conf:
                 res["confirmed"].append(r)
+            elif k == "ok" and not inside(r):
+                res["recovered"].append((r, p))  # старе замовлення — оплата нарешті знайшлась
             else:
                 keep.append((r, p))
         res[k] = keep
     for k in ("unpaid", "cod_only", "skipped"):
-        rows = [r for r in res[k] if inside(r)]
+        rows = [r for r in res[k] if (scope(r) if k == "unpaid" else inside(r))]
         if k == "unpaid":
             res["confirmed"] += [r for r in rows if str(r["n"]) in conf]
             rows = [r for r in rows if str(r["n"]) not in conf]
@@ -292,6 +307,9 @@ def check(d1: date, d2: date, folder: str = DEFAULT_DIR, confirmed=(), resolved_
                                           and skel(x.get("payer", "")) in skel(p["payer"] + p["purpose"])
                                           for x in resolved_payments)]
     res["n_payments"] = len(payments)
+    res["state"] = {"prepay": prepay,
+                    "open_unpaid": sorted({str(r["n"]) for r in res["unpaid"]}
+                                          | {str(r["n"]) for r, _ in res["sum_diff"]})}
     return res
 
 
