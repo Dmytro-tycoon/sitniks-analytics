@@ -5,7 +5,7 @@
 
 Блоки:
   rnp — РНП «Рука на пульсі» (scripts/face_channels.py) за D-(days-1)…D;
-  ads — «Ефективність реклами 2»: вкладка «Сайт» за D-(days-1)…D, «Інстаграм» за D;
+  ads — «Ефективність реклами 2»: вкладка «Сайт» за D-(days-1)…D, «Інстаграм» за D-2…D;
   pay — звірка передоплат з виписками ПриватБанку (scripts/payments_check.py) за D-(days-1)…D.
 
 Ручні рішення користувача — config/morning_overrides.json (винятки каналів, витрати зі скрінів,
@@ -142,9 +142,12 @@ def insta_tab_day(day, prev, dry):
         return prev
     r = retry(lambda: asyncio.run(write_daily_sums_to_sheet(day)))
     total = round(r.get("total_sum", 0), 2)
-    was = f" (було {money(prev)})" if prev is not None and abs(prev - total) > 0.01 else ""
-    print(f" Інстаграм {day:%d.%m}: {money(total)} ₴, міток {r.get('ads_written')}, "
-          f"стара атрибуція {money(r.get('stale_added_to_direct') or 0)}{was}")
+    if prev is not None and abs(prev - total) <= 0.01:
+        print(f" Інстаграм {day:%d.%m}: без змін ({money(total)} ₴)")
+    else:
+        was = f" (було {money(prev)})" if prev is not None else ""
+        print(f" Інстаграм {day:%d.%m}: {money(total)} ₴, міток {r.get('ads_written')}, "
+              f"стара атрибуція {money(r.get('stale_added_to_direct') or 0)}{was}")
     return total
 
 
@@ -199,8 +202,10 @@ def main():
         for d in days:
             time.sleep(SHEETS_PAUSE if "rnp" in blocks or d != days[0] else 0)
             state["site"][d.isoformat()] = site_tab_day(d, state["site"].get(d.isoformat()), a.dry)
-        time.sleep(SHEETS_PAUSE)
-        state["insta"][a.date.isoformat()] = insta_tab_day(a.date, state["insta"].get(a.date.isoformat()), a.dry)
+        # «Інстаграм»: учора + перевірка 2 попередніх днів (замовлення підтверджують із запізненням)
+        for d in [a.date - timedelta(days=i) for i in (2, 1, 0)]:
+            time.sleep(SHEETS_PAUSE)
+            state["insta"][d.isoformat()] = insta_tab_day(d, state["insta"].get(d.isoformat()), a.dry)
     if "pay" in blocks:
         print(f"Оплати {days[0]:%d.%m}–{days[-1]:%d.%m}")
         state["pay"] = payments(days[0], days[-1], ov, state.get("pay"))
