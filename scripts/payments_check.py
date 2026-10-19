@@ -78,8 +78,8 @@ def name_match(client: str, payer: str, purpose: str = "") -> bool:
     payer = re.sub(r"^(ФОП|ТОВ)\s+", "", (payer or "").strip(), flags=re.I)
     ps = surname(payer)
     tokens = [skel(t) for t in re.split(r"[\s,.]+", client or "") if len(skel(t)) >= 3]
-    # схожість цілих слів, а не лише початку: «Олексюк» ≠ «Олександра», але «Хапайло» ≈ «Харайло»
-    if len(ps) >= 3 and any(t == ps or (min(len(t), len(ps)) >= 5 and SequenceMatcher(None, t, ps).ratio() >= 0.8)
+    # схожість цілих слів (≥0.85): «Олексюк» ≠ «Олександра», «Козлова» ≠ «Корольова» (0.80), але «Хапайло» ≈ «Харайло» (0.86)
+    if len(ps) >= 3 and any(t == ps or (min(len(t), len(ps)) >= 5 and SequenceMatcher(None, t, ps).ratio() >= 0.85)
                             for t in tokens):
         return True
     if not purpose or payer != purpose:  # запасний варіант лише коли ПІБ платника не вдалося виділити
