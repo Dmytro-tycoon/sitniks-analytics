@@ -263,6 +263,14 @@ def load_payments(folder: str = DEFAULT_DIR):
     return payments
 
 
+def _payer_hit(key: str, p: dict) -> bool:
+    """Ключ платника з overrides: кирилиця — за «скелетом», латиниця/цифри (IBAN, назва банку) — як підрядок."""
+    k = skel(key)
+    if k:
+        return k in skel(p["payer"] + p["purpose"])
+    return bool(key) and key.lower() in (p["payer"] + " " + p["purpose"]).lower()
+
+
 def check(d1: date, d2: date, folder: str = DEFAULT_DIR, confirmed=(), resolved_payments=(), prev_state=None):
     """confirmed — № замовлень, які користувач підтвердив вручну (оплата на інший рахунок, квитанція);
     resolved_payments — [{"date": "13.10.2026", "amount": 1915}] — платежі, вже пояснені вручну;
@@ -304,7 +312,7 @@ def check(d1: date, d2: date, folder: str = DEFAULT_DIR, confirmed=(), resolved_
         res[k] = rows
     res["unknown_payments"] = [p for p in res["unknown_payments"]
                                if not any(p["dt"].startswith(x["date"]) and abs(p["amount"] - x["amount"]) < 0.01
-                                          and skel(x.get("payer", "")) in skel(p["payer"] + p["purpose"])
+                                          and _payer_hit(x.get("payer", ""), p)
                                           for x in resolved_payments)]
     res["n_payments"] = len(payments)
     res["state"] = {"prepay": prepay,
