@@ -277,9 +277,8 @@ def check(d1: date, d2: date, folder: str = DEFAULT_DIR, confirmed=(), resolved_
     prev_state — {"prepay": {№: сума}, "open_unpaid": [№]} з попереднього запуску (morning.py).
     Старі замовлення (до d1, за LOOKBACK днів) потрапляють у звіт, якщо були неоплачені минулого разу
     або в них змінилась передоплата (напр. №17872: передоплату 200 внесли через 3 дні, разом з оплатою)."""
-    payments = load_payments(folder)
+    all_payments = load_payments(folder)
     orders = asyncio.run(load_orders(d1 - timedelta(days=LOOKBACK), d2))
-    payments = [p for p in payments if d1 - timedelta(days=1) <= p["date"] <= d2 + timedelta(days=1)]
     conf = {str(x) for x in confirmed}
     prev = prev_state or {}
     prev_prepay, prev_open = prev.get("prepay", {}), {str(x) for x in prev.get("open_unpaid", [])}
@@ -287,6 +286,11 @@ def check(d1: date, d2: date, folder: str = DEFAULT_DIR, confirmed=(), resolved_
     old = {str(o.get("orderNumber") or o["id"]) for o in orders if kyiv_day(o["createdAt"]) < d1}
     changed = {n for n in old if n in prev_prepay and prepay[n] > 0 and abs(prev_prepay[n] - prepay[n]) > 0.01}
     extended = ((prev_open & old) | changed) - conf
+    # платежі: вікно періоду, а для старих замовлень під наглядом — від їхньої дати (платіж Чичви 16.10
+    # має лишатися видимим і 20.10, інакше «сума інша» перетворюється на «не оплачено»)
+    days = {str(o.get("orderNumber") or o["id"]): kyiv_day(o["createdAt"]) for o in orders}
+    start = min([d1] + [days[n] for n in extended]) - timedelta(days=1)
+    payments = [p for p in all_payments if start <= p["date"] <= d2 + timedelta(days=1)]
     res = match(orders, payments, extended)
     inside = lambda r: d1 <= r["day"] <= d2
     scope = lambda r: inside(r) or str(r["n"]) in extended
@@ -311,7 +315,8 @@ def check(d1: date, d2: date, folder: str = DEFAULT_DIR, confirmed=(), resolved_
             rows = [r for r in rows if str(r["n"]) not in conf]
         res[k] = rows
     res["unknown_payments"] = [p for p in res["unknown_payments"]
-                               if not any(p["dt"].startswith(x["date"]) and abs(p["amount"] - x["amount"]) < 0.01
+                               if d1 - timedelta(days=1) <= p["date"] <= d2 + timedelta(days=1)
+                               and not any(p["dt"].startswith(x["date"]) and abs(p["amount"] - x["amount"]) < 0.01
                                           and _payer_hit(x.get("payer", ""), p)
                                           for x in resolved_payments)]
     res["n_payments"] = len(payments)
