@@ -139,7 +139,7 @@ def write(day: date, st: dict, ads: dict, skip_ad_channels=()):
     sh = SheetsClient(settings.GOOGLE_SERVICE_ACCOUNT_FILE, SHEET_ID)
     tab = f"'РНП День ({MONTHS[day.month]})'"
     hdr = sh._service.spreadsheets().values().get(
-        spreadsheetId=SHEET_ID, range=f"{tab}!A38:DZ39").execute()["values"]
+        spreadsheetId=SHEET_ID, range=f"{tab}!A38:GZ39").execute()["values"]
     dates, names = hdr[0], hdr[1]
     start = dates.index(str(day.day))
     data = []
