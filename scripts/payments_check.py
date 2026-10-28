@@ -33,7 +33,7 @@ from src.analyzer.order_status import status_title  # noqa: E402
 
 DEFAULT_DIR = os.path.expanduser(
     "~/Library/Mobile Documents/com~apple~CloudDocs/Documents/Skin.One/Виписки")
-SKIP_STATUSES = {"Відмінено", "Відмовилась"}
+SKIP_STATUSES = {"Відмінено", "Відмовилась", "Не було в наявності"}
 TOLERANCE = 2.0  # округлення копійок (1039.5 → 1040)
 MAX_DAYS = 2      # платіж шукаємо не далі ніж ±2 дні від дати замовлення
 LOOKBACK = 10     # старі замовлення (до періоду), за якими стежимо: ще не оплачені або змінили передоплату
