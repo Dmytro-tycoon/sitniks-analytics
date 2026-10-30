@@ -1,12 +1,14 @@
 """Ранковий збір даних одним запуском — друкує лише ЗМІНИ.
 
   python scripts/morning.py                 # учора + перевірка 2 попередніх днів, усі блоки
-  python scripts/morning.py --date 2026-10-13 --days 3 --only rnp,ads,pay [--dry]
+  python scripts/morning.py --date 2026-10-13 --days 3 --only rnp,ads,pay,mgr [--dry]
 
 Блоки:
   rnp — РНП «Рука на пульсі» (scripts/face_channels.py) за D-(days-1)…D;
   ads — «Ефективність реклами 2»: вкладка «Сайт» за D-(days-1)…D, «Інстаграм» за D-1…D;
-  pay — звірка передоплат з виписками ПриватБанку (scripts/payments_check.py) за D-(days-1)…D.
+  pay — звірка передоплат з виписками ПриватБанку (scripts/payments_check.py) за D-(days-1)…D;
+  mgr — «Звіт по менеджерам» по каналах (scripts/managers_sheet.py) за D-(days-1)…D, з листопада 2026;
+        вкладку нового місяця створює сам.
 
 Ручні рішення користувача — config/morning_overrides.json (винятки каналів, витрати зі скрінів,
 підтверджені оплати). Стан попереднього запуску — data/morning_state.json (для звіту змін).
@@ -30,11 +32,13 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import face_channels as fc  # noqa: E402
+import managers_sheet as ms  # noqa: E402
 import payments_check as pc  # noqa: E402
 
 OVERRIDES = ROOT / "config" / "morning_overrides.json"
 STATE = Path(os.getenv("MORNING_STATE_PATH", DATA / "morning_state.json"))
 SHORT = {"Інстаграм": "Інст", "ФБ": "ФБ", "Сайт ФБ": "СайтФБ", "Сайт Гугл": "СайтГугл", "Сайт прямі": "СайтПрямі"}
+MGR_START = date(2026, 11, 1)  # з листопада — нова мотивація по каналах (30.10.2026)
 SHEETS_PAUSE = 10  # квота Google Sheets: 60 читань/хв на сервісний акаунт
 
 
@@ -181,7 +185,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--date", type=date.fromisoformat, default=date.today() - timedelta(days=1))
     ap.add_argument("--days", type=int, default=3)
-    ap.add_argument("--only", default="rnp,ads,pay")
+    ap.add_argument("--only", default="rnp,ads,pay,mgr")
     ap.add_argument("--dry", action="store_true", help="нічого не писати в таблиці")
     a = ap.parse_args()
     blocks = set(a.only.split(","))
@@ -209,6 +213,17 @@ def main():
     if "pay" in blocks:
         print(f"Оплати {days[0]:%d.%m}–{days[-1]:%d.%m}")
         state["pay"] = payments(days[0], days[-1], ov, state.get("pay"))
+    if "mgr" in blocks:
+        mgr_days = [d for d in days if d >= MGR_START]
+        if mgr_days:
+            print("Звіт по менеджерам")
+        for d in mgr_days:
+            if not a.dry and not ms.has_channel_tab(d):
+                ms.create_month(d.year, d.month)
+            data = retry(lambda: asyncio.run(ms.collect(d)))
+            ms.show(d, data)
+            if not a.dry:
+                ms.write(d, data)
     if not a.dry:
         STATE.parent.mkdir(parents=True, exist_ok=True)
         STATE.write_text(json.dumps(state, ensure_ascii=False, indent=1))
