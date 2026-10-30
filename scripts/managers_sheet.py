@@ -7,12 +7,16 @@
 Винагорода за день = 3% × (ТО Instagram × К_Instagram + ТО Facebook × К_Facebook + ТО Сайт × К_Сайт),
 К — з таблиць на вкладці «Мотивація» за конверсією каналу за день (погоджено 30.10.2026).
 
-Ліди каналу (на менеджерку = assignedManagerName чату / відповідальна замовлення):
-  - нові чати за день (дата першого повідомлення): Instagram — skin.one.ua, «SKIN.ONE — косметолог онлайн»;
-    Facebook — «Анастасія Ємець - косметолог-естетист»; Сайт — бот SKIN-ONE Assistant;
-    приватні Telegram/Viber («SKIN. ONE», «SKIN.ONE Viber») — НЕ ліди (менеджерки пишуть туди самі);
-  - + замовлення з давніших чатів і без чату; + усі замовлення з форми сайту (будь-який статус).
-Продажі / ТО — замовлення дня з врахованим статусом (order_status.py). День менеджерки рахуємо,
+Ліди / продажі (на менеджерку = assignedManagerName чату / відповідальна замовлення; уточнено з користувачем 30.10):
+  - Instagram: нові чати skin.one.ua (джерело instagram; однойменне джерело TikTok — НЕ рахуємо)
+    + замовлення з діючих чатів skin.one.ua; + замовлення без чату та з бота «SKIN.ONE — косметолог онлайн»
+    (рахуються як замовлення Instagram: продаж і лід);
+  - Facebook: нові чати «Анастасія Ємець - косметолог-естетист» + замовлення з діючих чатів;
+  - Сайт: нові чати Viber («SKIN.ONE Viber»), Telegram («SKIN. ONE») і бота SKIN-ONE Assistant
+    + замовлення з діючих чатів цих джерел; продажі — ці замовлення та замовлення з форми сайту
+    (форма без чату — продаж без ліда).
+  Канал замовлення визначаємо за його чатом (поле «канал продажу» в Sitniks для Instagram підписане «Tik-Tok»).
+Продажі / ТО — без скасованих і неоплачених (order_status.py). День менеджерки рахуємо,
 лише якщо в неї є хоча б одне замовлення (інакше в чатах «висять» перепризначені на вихідних).
 """
 import asyncio
@@ -44,8 +48,8 @@ MANAGERS = {"Єлизавета": "Ліза", "Елизавета": "Ліза", 
 BLOCKS = ["Ліза", "Діана", "Віка", "Даша"]
 CHANNELS = ["Instagram", "Facebook", "Сайт"]
 FB_OWNER = "Анастасія Ємець - косметолог-естетист"
-BOT_OWNER = "SKIN-ONE Assistant"
-IG_OWNERS = {"skin.one.ua", "SKIN.ONE — косметолог онлайн"}
+IG_OWNER = "skin.one.ua"
+SITE_OWNERS = {"SKIN.ONE Viber", "SKIN. ONE", "SKIN-ONE Assistant"}
 SITE_PREFIX = "Сайт skin-one.com.ua"
 # Таблиці коефіцієнтів на «Мотивація»: (колонка «Факт», колонка «Коефіцієнт»), рядки 3–8
 COEF_COLS = {"Instagram": ("C", "D"), "Facebook": ("G", "H"), "Сайт": ("K", "L")}
@@ -92,24 +96,15 @@ def month_columns(year, month):
     return cols
 
 
-def channel_of_order(o):
-    if SITE_PREFIX in (o.get("managerComment") or ""):
-        return "Сайт"
-    title = (o.get("salesChannel") or {}).get("title")
-    if title == FB_OWNER:
-        return "Facebook"
-    if title == BOT_OWNER:
-        return "Сайт"
-    return "Instagram"
-
-
-def channel_of_chat(owner):
+def channel_of_chat(chat):
+    """Канал чату для лідів; None — не рахуємо як лід (TikTok, «косметолог онлайн», інші)."""
+    owner, src = chat.get("ownerName"), chat.get("initialSource")
+    if owner == IG_OWNER and src == "instagram":
+        return "Instagram"
     if owner == FB_OWNER:
         return "Facebook"
-    if owner == BOT_OWNER:
+    if owner in SITE_OWNERS:
         return "Сайт"
-    if owner in IG_OWNERS:
-        return "Instagram"
     return None
 
 
@@ -121,6 +116,10 @@ async def collect(day: date) -> dict:
         b = a + timedelta(days=1)
         orders = await s.get_orders_exact(a, b)
         chats = await s.get_all_chats(a.astimezone(pytz.utc), b.astimezone(pytz.utc), by_first_message=True)
+        chat_of = {}
+        for cid in {o.get("chatId") for o in orders if o.get("chatId")}:
+            chat_of[cid] = await s.get_chat(cid)
+            await asyncio.sleep(0.2)
     finally:
         await s.close()
     index = repeat_clients.load_index()
@@ -129,7 +128,7 @@ async def collect(day: date) -> dict:
     new_ids = set()
     for c in chats:
         new_ids.add(c["id"])
-        m, ch = MANAGERS.get(c.get("assignedManagerName")), channel_of_chat(c.get("ownerName"))
+        m, ch = MANAGERS.get(c.get("assignedManagerName")), channel_of_chat(c)
         if m and ch:
             res[m][ch]["L"] += 1
     for o in orders:
@@ -137,10 +136,15 @@ async def collect(day: date) -> dict:
         if not m:
             continue
         active.add(m)
-        ch = channel_of_order(o)
         cid = o.get("chatId")
-        if SITE_PREFIX in (o.get("managerComment") or "") or not cid or cid not in new_ids:
-            res[m][ch]["L"] += 1
+        chat_ch = channel_of_chat(chat_of.get(cid) or {}) if cid else None
+        if SITE_PREFIX in (o.get("managerComment") or ""):
+            ch, lead = "Сайт", chat_ch == "Сайт" and cid not in new_ids
+        elif chat_ch:
+            ch, lead = chat_ch, cid not in new_ids
+        else:  # без чату / «косметолог онлайн» / інші джерела — як замовлення Instagram
+            ch, lead = "Instagram", True
+        res[m][ch]["L"] += lead
         if is_countable_order(o):
             x = res[m][ch]
             x["S"] += 1
