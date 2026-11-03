@@ -220,7 +220,7 @@ def main():
         for d in mgr_days:
             if not a.dry and not ms.has_channel_tab(d):
                 ms.create_month(d.year, d.month)
-            data = retry(lambda: asyncio.run(ms.collect(d)))
+            data = retry(lambda: asyncio.run(ms.collect(d, ov.get("mgr_exclude_orders", []))))
             ms.show(d, data)
             if not a.dry:
                 ms.write(d, data)

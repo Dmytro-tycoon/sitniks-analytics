@@ -108,13 +108,15 @@ def channel_of_chat(chat):
     return None
 
 
-async def collect(day: date) -> dict:
-    """{блок: {"Instagram": {L,S,TO}, …, "rep": n, "items": n}} лише для менеджерок із замовленнями дня."""
+async def collect(day: date, exclude=()) -> dict:
+    """{блок: {"Instagram": {L,S,TO}, …, "rep": n, "items": n}} лише для менеджерок із замовленнями дня.
+    exclude — № замовлень, які не рахуємо (напр. покупки менеджерок для себе)."""
     s = SitniksClient()
     try:
         a = KIEV.localize(datetime(day.year, day.month, day.day))
         b = a + timedelta(days=1)
-        orders = await s.get_orders_exact(a, b)
+        skip = {str(n) for n in exclude}
+        orders = [o for o in await s.get_orders_exact(a, b) if str(o.get("orderNumber")) not in skip]
         chats = await s.get_all_chats(a.astimezone(pytz.utc), b.astimezone(pytz.utc), by_first_message=True)
         chat_of = {}
         for cid in {o.get("chatId") for o in orders if o.get("chatId")}:
