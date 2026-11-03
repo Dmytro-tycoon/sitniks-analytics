@@ -51,6 +51,7 @@ FB_OWNER = "Анастасія Ємець - косметолог-естетис�
 IG_OWNER = "skin.one.ua"
 SITE_OWNERS = {"SKIN.ONE Viber", "SKIN. ONE", "SKIN-ONE Assistant"}
 SITE_PREFIX = "Сайт skin-one.com.ua"
+SITE_LOOKBACK = 7  # днів: замовлення з сайту, створені раніше й підтверджені в цей день
 # Таблиці коефіцієнтів на «Мотивація»: (колонка «Факт», колонка «Коефіцієнт»), рядки 3–8
 COEF_COLS = {"Instagram": ("C", "D"), "Facebook": ("G", "H"), "Сайт": ("K", "L")}
 NEW_TABLES = {  # погоджено 30.10.2026; Instagram — чинна таблиця B1:D8
@@ -116,7 +117,11 @@ async def collect(day: date, exclude=()) -> dict:
         a = KIEV.localize(datetime(day.year, day.month, day.day))
         b = a + timedelta(days=1)
         skip = {str(n) for n in exclude}
-        orders = [o for o in await s.get_orders_exact(a, b) if str(o.get("orderNumber")) not in skip]
+        # Замовлення з сайту рахуємо в день підтвердження (користувач 03.11), решту — в день створення
+        wide = await s.get_orders_exact(a - timedelta(days=SITE_LOOKBACK), b)
+        orders = [o for o in wide if str(o.get("orderNumber")) not in skip and (
+            confirm_day(o) == day if SITE_PREFIX in (o.get("managerComment") or "")
+            else a <= datetime.fromisoformat(o["createdAt"].replace("Z", "+00:00")) < b)]
         chats = await s.get_all_chats(a.astimezone(pytz.utc), b.astimezone(pytz.utc), by_first_message=True)
         chat_of = {}
         for cid in {o.get("chatId") for o in orders if o.get("chatId")}:
@@ -154,6 +159,14 @@ async def collect(day: date, exclude=()) -> dict:
             res[m]["rep"] += repeat_clients.is_repeat(o, index)
             res[m]["items"] += sum(int(p.get("quantity") or 1) for p in o.get("products") or [])
     return {m: res[m] for m in BLOCKS if m in active}
+
+
+def confirm_day(o: dict) -> date:
+    """День підтвердження замовлення з сайту (виходить зі статусу «Новий» після оплати) — за київським часом.
+    Історії статусів API не дає; доставку менеджерка оформлює саме при підтвердженні, тож беремо delivery.createdAt
+    (перевірено 25.10–03.11 на 80 замовленнях). Без доставки (самовивіз) — день створення."""
+    ts = (o.get("delivery") or {}).get("createdAt") or o.get("createdAt")
+    return datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(KIEV).date()
 
 
 def _svc():
