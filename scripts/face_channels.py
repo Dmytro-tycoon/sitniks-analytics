@@ -29,6 +29,7 @@ from src.sitniks.client import SitniksClient
 from src.sheets.client import SheetsClient
 from src.analyzer.order_status import is_countable_order
 from src.analyzer import repeat_clients
+from src.google_ads import client as google_ads
 
 KIEV = pytz.timezone("Europe/Kiev")
 SHEET_ID = "1U-JZBWFBb-zFMpBGF-h50lFgUKtRnN5zyLkuQofiKyI"
@@ -119,18 +120,27 @@ async def collect(day: date, site_overrides: dict = None) -> dict:
 
 
 def fetch_site_ads(day: date) -> dict:
-    """{канал: {spend, impressions, clicks}} реклами сайту за день з дашборда Дениса."""
-    key = os.getenv("DASH_RNP_KEY") or getattr(settings, "DASH_RNP_KEY", "")
-    if not key:
-        print("  DASH_RNP_KEY не задано — рядки 55/57/58 пропускаю")
-        return {}
-    with urllib.request.urlopen(DASH_URL.format(key=key), timeout=60) as r:
-        dash = json.load(r)
+    """{канал: {spend, impressions, clicks}} реклами сайту за день.
+    «Сайт Гугл» — напряму з Google Ads API (з 04.11.2026), «Сайт ФБ» — з дашборда Дениса.
+    Якщо одне з джерел недоступне — інший канал однаково повертаємо (рядки недоступного каналу не чіпаємо)."""
     out = {}
+    key = os.getenv("DASH_RNP_KEY") or getattr(settings, "DASH_RNP_KEY", "")
+    dash = {}
+    if key:
+        try:
+            with urllib.request.urlopen(DASH_URL.format(key=key), timeout=60) as r:
+                dash = json.load(r)
+        except Exception as e:
+            print(f"  ⚠️ дашборд недоступний ({type(e).__name__}) — рядки 55/57/58 «Сайт ФБ» за {day} не чіпаю")
     for ch, block in AD_SOURCES.items():
         d = ((dash.get(block) or {}).get("days") or {}).get(day.isoformat())
         if d:
             out[ch] = {k: d.get(k) or 0 for k in AD_ROWS}
+    if os.getenv("GOOGLE_ADS_REFRESH_TOKEN"):
+        try:
+            out["Сайт Гугл"] = google_ads.day_totals(day)
+        except Exception as e:
+            print(f"  ⚠️ Google Ads API ({type(e).__name__}: {str(e)[:80]}) — «Сайт Гугл» беру з дашборда")
     return out
 
 
