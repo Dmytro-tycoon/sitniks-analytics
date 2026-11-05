@@ -63,7 +63,7 @@ NEW_TABLES = {  # погоджено 30.10.2026; Instagram — чинна таб
 BLOCK_H = 32
 R_DATE, R_WD, R_NAME = 0, 1, 2
 CH_ROW = {"Instagram": 3, "Facebook": 9, "Сайт": 15}     # рядок-заголовок каналу; далі +1..+5
-L, S, TO, CONV, COEF = 1, 2, 3, 4, 5
+TO, S, L, CONV, COEF = 1, 2, 3, 4, 5   # порядок як у жовтні: ТО → продажі → ліди (05.11)
 R_TOTAL = 21
 T_TO, T_S, T_REP, T_REP_PCT, T_ITEMS, T_PER_CHECK, T_AVG, T_3PCT, T_PAY = range(22, 31)
 
@@ -205,8 +205,9 @@ def write(day: date, data: dict):
         d = data.get(m)
         for ch in CHANNELS:
             r0 = top + CH_ROW[ch]
-            vals = [d[ch]["L"], d[ch]["S"], round(d[ch]["TO"], 2)] if d else ["", "", ""]
-            upd.append({"range": f"'{tab}'!{c}{r0 + L}:{c}{r0 + TO}", "values": [[v] for v in vals]})
+            for rel, v in ((TO, round(d[ch]["TO"], 2)), (S, d[ch]["S"]), (L, d[ch]["L"])) if d else \
+                    ((TO, ""), (S, ""), (L, "")):
+                upd.append({"range": f"'{tab}'!{c}{r0 + rel}", "values": [[v]]})
         upd.append({"range": f"'{tab}'!{c}{top + T_REP}", "values": [[d["rep"] if d else ""]]})
         upd.append({"range": f"'{tab}'!{c}{top + T_ITEMS}", "values": [[d["items"] if d else ""]]})
     svc.values().batchUpdate(spreadsheetId=SHEET_ID, body={"valueInputOption": "RAW", "data": upd}).execute()
@@ -268,7 +269,7 @@ def create_month(year, month):
         for ch in CHANNELS:
             h = CH_ROW[ch]
             grid[h][1] = ch
-            for rel, label in ((L, "Ліди, шт."), (S, "Продажі, к-сть"), (TO, "ТО, грн."),
+            for rel, label in ((TO, "ТО, грн."), (S, "Продажі, к-сть"), (L, "Ліди, шт."),
                                (CONV, "Конверсія, %"), (COEF, "Коефіцієнт")):
                 grid[h + rel][1] = label
             for rel in (L, S, TO):
@@ -307,8 +308,9 @@ def create_month(year, month):
     svc.values().update(spreadsheetId=SHEET_ID, range=f"'{tab}'!A1", valueInputOption="USER_ENTERED",
                         body={"values": rows}).execute()
 
-    # Оформлення в стилі попередніх місяців
-    ORANGE, DARK, GREY, LIGHT, GREEN = "#E69138", "#434343", "#D9D9D9", "#F3F3F3", "#D9EAD3"
+    # Оформлення в кольорах жовтня 2026 (погоджено 05.11)
+    ORANGE, DARK, GREY, LIGHT, GREEN, PEACH = "#E69138", "#434343", "#D9D9D9", "#D9D9D9", "#00FF00", "#FCE5CD"
+    thin = {"style": "SOLID", "width": 1, "color": _rgb("#000000")}
     req = []
 
     def rng(r1, r2, c1=0, c2=ncols):  # 0-based, r2/c2 виключно
@@ -329,8 +331,16 @@ def create_month(year, month):
         white_bold = {"bold": True, "foregroundColor": _rgb("#FFFFFF")}
         fmt(rng(t, t + 2), {"backgroundColor": _rgb(ORANGE), "textFormat": {"bold": True},
                             "horizontalAlignment": "CENTER"}, "backgroundColor,textFormat,horizontalAlignment")
-        fmt(rng(t + R_NAME, t + R_NAME + 1), {"backgroundColor": _rgb(DARK), "textFormat": white_bold},
+        fmt(rng(t, t + 1, 1, 3), {"backgroundColor": _rgb("#FFFFFF")}, "backgroundColor")
+        fmt(rng(t + 1, t + 2, 1, 4), {"backgroundColor": _rgb("#FFFFFF")}, "backgroundColor")
+        fmt(rng(t + R_NAME, t + R_NAME + 1, 0, 1), {"backgroundColor": _rgb(DARK),
+                                                    "textFormat": {"bold": True, "foregroundColor": _rgb("#EFEFEF")}},
             "backgroundColor,textFormat")
+        for r1, r2, c1 in ((t, t + 1, 3), (t + 1, t + 2, 4), (t + 3, t + R_TOTAL + 10, 1)):
+            for b in ((0, 1), (c1, ncols)):
+                req.append({"updateBorders": {"range": rng(r1, r2, *b), "top": thin, "bottom": thin, "left": thin,
+                                              "right": thin, "innerHorizontal": thin, "innerVertical": thin}})
+        fmt(rng(t + 3, t + R_TOTAL + 10, 3, ncols), {"horizontalAlignment": "CENTER"}, "horizontalAlignment")
         fmt(rng(t + 3, t + R_TOTAL + 10, 3, 4), {"backgroundColor": _rgb(DARK), "textFormat": white_bold},
             "backgroundColor,textFormat")
         for wc in week_cols:
@@ -340,14 +350,22 @@ def create_month(year, month):
                 "backgroundColor,textFormat")
         fmt(rng(t + 3, t + R_TOTAL + 10, 1, 3), {"textFormat": {"bold": True}}, "textFormat")
         for h in CH_ROW.values():
-            fmt(rng(t + h + L, t + h + S + 1, 3, ncols), {"numberFormat": INT}, "numberFormat")
+            for rel in (S, L):
+                fmt(rng(t + h + rel, t + h + rel + 1, 3, ncols), {"numberFormat": INT}, "numberFormat")
             fmt(rng(t + h + TO, t + h + TO + 1, 3, ncols), {"numberFormat": UAH}, "numberFormat")
-            fmt(rng(t + h + CONV, t + h + CONV + 1, 1, ncols), {"numberFormat": PCT, "backgroundColor": _rgb(GREEN)},
-                "numberFormat,backgroundColor")
+            fmt(rng(t + h + CONV, t + h + CONV + 1, 1, ncols), {"numberFormat": PCT, "backgroundColor": _rgb(GREEN),
+                                                               "textFormat": {"bold": True}},
+                "numberFormat,backgroundColor,textFormat.bold")
+            fmt(rng(t + h + COEF, t + h + COEF + 1, 3, 4), {"backgroundColor": _rgb("#FFFFFF"),
+                                                           "textFormat": {"bold": False}},
+                "backgroundColor,textFormat.bold")
             fmt(rng(t + h + COEF, t + h + COEF + 1, 3, ncols), {"numberFormat": DEC2}, "numberFormat")
         for rel, nf in ((T_TO, UAH), (T_S, INT), (T_REP, INT), (T_REP_PCT, PCT), (T_ITEMS, INT),
                         (T_PER_CHECK, DEC1), (T_AVG, UAH), (T_3PCT, UAH), (T_PAY, UAH)):
             fmt(rng(t + rel, t + rel + 1, 3, ncols), {"numberFormat": nf}, "numberFormat")
+        for rel in (T_REP_PCT, T_PER_CHECK, T_AVG):
+            for dc in day_cols:
+                fmt(rng(t + rel, t + rel + 1, dc, dc + 1), {"backgroundColor": _rgb(PEACH)}, "backgroundColor")
         fmt(rng(t + T_PAY, t + T_PAY + 1, 1, ncols), {"textFormat": {"bold": True}}, "textFormat.bold")
         for rel in range(3, R_TOTAL + 10):
             req.append({"mergeCells": {"range": rng(t + rel, t + rel + 1, 1, 3), "mergeType": "MERGE_ALL"}})
