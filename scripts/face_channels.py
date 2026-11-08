@@ -41,6 +41,10 @@ CHAT_CHANNEL = {  # (ownerName, initialSource) -> колонка
     ("SKIN-ONE Assistant", "telegram_bot"): "Сайт прямі",
 }
 DEFAULT_CHANNEL = "Інстаграм"  # усі інші джерела (07.10.2026)
+# Viber і Telegram Private: новий чат виникає лише для підтвердження замовлення з форми сайту → окремою
+# заявкою не рахуємо (заявка = саме замовлення з форми, канал за міткою). Повторне замовлення, оформлене
+# в такому чаті без форми, — «Сайт прямі» (заявка + продаж). Користувач 08.11.2026.
+SITE_CONFIRM_OWNERS = {"SKIN.ONE Viber", "SKIN. ONE"}
 SITE_PREFIX = "Сайт skin-one.com.ua"
 ROWS = {"to": 40, "margin": 42, "leads": 45, "sales": 46, "repeat": 47, "items": 49}
 AD_ROWS = {"spend": 55, "impressions": 57, "clicks": 58}
@@ -80,9 +84,11 @@ async def collect(day: date, site_overrides: dict = None) -> dict:
     st["_orders"] = {c: {} for c in CHANNELS}
     new_ids = set()
     for c in new_chats:
+        new_ids.add(c["id"])
+        if c.get("ownerName") in SITE_CONFIRM_OWNERS:
+            continue  # чат підтвердження замовлення з форми — заявку вже дає саме замовлення
         ch = CHAT_CHANNEL.get((c.get("ownerName"), c.get("initialSource")), DEFAULT_CHANNEL)
         st[ch]["leads"] += 1
-        new_ids.add(c["id"])
 
     chat_cache = {}
     for o in orders:
@@ -100,9 +106,13 @@ async def collect(day: date, site_overrides: dict = None) -> dict:
                     chat_cache[cid] = await s.get_chat(cid)
                     await asyncio.sleep(0.3)
                 chat = chat_cache[cid]
-                ch = CHAT_CHANNEL.get((chat.get("ownerName"), chat.get("initialSource")), DEFAULT_CHANNEL)
-                if cid not in new_ids:
-                    st[ch]["leads"] += 1  # замовлення з діючого чату
+                if chat.get("ownerName") in SITE_CONFIRM_OWNERS:
+                    ch = "Сайт прямі"  # повторне замовлення через Viber/Telegram без форми
+                    st[ch]["leads"] += 1  # новий чат цих джерел заявкою не рахувався
+                else:
+                    ch = CHAT_CHANNEL.get((chat.get("ownerName"), chat.get("initialSource")), DEFAULT_CHANNEL)
+                    if cid not in new_ids:
+                        st[ch]["leads"] += 1  # замовлення з діючого чату
         if not is_countable_order(o):
             continue
         to = float(o.get("totalPriceDiscount") or 0)
