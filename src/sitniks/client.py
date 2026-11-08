@@ -199,7 +199,8 @@ class SitniksClient:
             json={"tags": tags},
         )
         response.raise_for_status()
-        return response.json()
+        # Sitniks інколи повертає 200 з порожнім тілом
+        return response.json() if response.content else {}
 
     async def close(self):
         await self.client.aclose()
