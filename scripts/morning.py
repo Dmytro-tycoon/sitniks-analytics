@@ -4,7 +4,8 @@
   python scripts/morning.py --date 2026-10-13 --days 3 --only rnp,ads,pay,mgr [--dry]
 
 Блоки:
-  rnp — РНП «Рука на пульсі» (scripts/face_channels.py) за D-(days-1)…D;
+  rnp — РНП «Рука на пульсі» (scripts/face_channels.py) за D-(days-1)…D; + рядок «позавчорашні замовлення
+        з сайту, оплачені вчора» (створені D-1, підтверджені D) і як через них змінився ТО D-1 (користувач 10.11.2026);
   ads — «Ефективність реклами 2»: вкладка «Сайт» за D-(days-1)…D, «Інстаграм» за D-1…D;
   pay — звірка передоплат з виписками ПриватБанку (scripts/payments_check.py) за D-(days-1)…D;
   mgr — «Звіт по менеджерам» по каналах (scripts/managers_sheet.py) за D-(days-1)…D, з листопада 2026;
@@ -118,6 +119,33 @@ def rnp_day(day, ov, prev, dry):
     return cur
 
 
+def late_site_paid(created_day, prev_total, cur_total):
+    """Замовлення з форми сайту, створені created_day і підтверджені (оплачені) наступного дня
+    (день підтвердження = delivery.createdAt, як у managers_sheet.confirm_day)."""
+    from src.sitniks.client import SitniksClient
+    from src.analyzer.order_status import is_countable_order
+
+    async def fetch():
+        s = SitniksClient()
+        try:
+            a = ms.KIEV.localize(datetime(created_day.year, created_day.month, created_day.day))
+            return await s.get_orders_exact(a, a + timedelta(days=1))
+        finally:
+            await s.close()
+    paid_day = created_day + timedelta(days=1)
+    late = [o for o in retry(lambda: asyncio.run(fetch()))
+            if fc.SITE_PREFIX in (o.get("managerComment") or "") and is_countable_order(o)
+            and ms.confirm_day(o) == paid_day]
+    total = sum(float(o.get("totalPriceDiscount") or 0) for o in late)
+    nums = ", ".join(f"№{o.get('orderNumber')} {money(float(o.get('totalPriceDiscount') or 0))}" for o in late)
+    to_txt = ""
+    if prev_total is not None and cur_total is not None:
+        d = cur_total - prev_total
+        to_txt = f" | ТО {created_day:%d.%m}: {money(prev_total)} → {money(cur_total)} ₴ ({'+' if d >= 0 else '−'}{money(abs(d))})"
+    print(f" Сайт {created_day:%d.%m} → оплачено {paid_day:%d.%m}: {len(late)} замовл. на {money(total)} ₴"
+          + (f" ({nums})" if nums else "") + to_txt)
+
+
 # ─── Ефективність реклами 2 ─────────────────────────────────────────────
 def site_tab_day(day, prev, dry):
     from src.analyzer.site_orders import fetch_site_orders_for_date, group_by_ad_label
@@ -200,7 +228,11 @@ def main():
         for i, d in enumerate(days):
             if i:
                 time.sleep(SHEETS_PAUSE)
-            state["rnp"][d.isoformat()] = rnp_day(d, ov, state["rnp"].get(d.isoformat()), a.dry)
+            prev_rnp = state["rnp"].get(d.isoformat())
+            state["rnp"][d.isoformat()] = rnp_day(d, ov, prev_rnp, a.dry)
+            if d == a.date - timedelta(days=1):  # позавчора: що з нього оплатили вчора
+                tot = lambda x: round(sum(c["to"] for c in x.values()), 2) if x else None
+                late_site_paid(d, tot(prev_rnp), tot(state["rnp"][d.isoformat()]))
     if "ads" in blocks:
         print("Ефективність реклами 2")
         for d in days:
