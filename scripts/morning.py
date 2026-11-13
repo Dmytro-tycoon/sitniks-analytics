@@ -6,6 +6,8 @@
 Блоки:
   rnp — РНП «Рука на пульсі» (scripts/face_channels.py) за D-(days-1)…D; + рядок «позавчорашні замовлення
         з сайту, оплачені вчора» (створені D-1, підтверджені D) і як через них змінився ТО D-1 (користувач 10.11.2026);
+        + перевірка старіших днів (до 14 днів назад): якщо там з'явилися оплачені замовлення (напр. «Очікуємо оплату»
+        / «Новий» → «В роботі») або оплачені зникли — день перераховується й переписується (користувач 13.11.2026);
   ads — «Ефективність реклами 2»: вкладка «Сайт» за D-(days-1)…D, «Інстаграм» за D-1…D;
   pay — звірка передоплат з виписками ПриватБанку (scripts/payments_check.py) за D-(days-1)…D;
   mgr — «Звіт по менеджерам» по каналах (scripts/managers_sheet.py) за D-(days-1)…D, з листопада 2026;
@@ -39,6 +41,8 @@ import payments_check as pc  # noqa: E402
 OVERRIDES = ROOT / "config" / "morning_overrides.json"
 STATE = Path(os.getenv("MORNING_STATE_PATH", DATA / "morning_state.json"))
 SHORT = {"Інстаграм": "Інст", "ФБ": "ФБ", "Сайт ФБ": "СайтФБ", "Сайт Гугл": "СайтГугл", "Сайт прямі": "СайтПрямі"}
+RECHECK_DAYS = 14  # скільки днів назад шукати пізно оплачені замовлення (13.11.2026)
+RECHECK_FROM = date(2026, 11, 6)  # раніше — ручні виправлення заявок у РНП (08.11), не переписуємо
 MGR_START = date(2026, 11, 1)  # з листопада — нова мотивація по каналах (30.10.2026)
 SHEETS_PAUSE = 10  # квота Google Sheets: 60 читань/хв на сервісний акаунт
 
@@ -146,6 +150,40 @@ def late_site_paid(created_day, prev_total, cur_total):
           + (f" ({nums})" if nums else "") + to_txt)
 
 
+def stale_rnp_days(first_checked, state_rnp):
+    """Дні між (first_checked − RECHECK_DAYS) і first_checked−1, у яких набір врахованих (оплачених)
+    замовлень відрізняється від збереженого стану — їх треба перерахувати."""
+    from src.sitniks.client import SitniksClient
+    from src.analyzer.order_status import is_countable_order
+    start = max(first_checked - timedelta(days=RECHECK_DAYS), RECHECK_FROM)
+    if start >= first_checked:
+        return []
+
+    async def fetch():
+        s = SitniksClient()
+        try:
+            a = ms.KIEV.localize(datetime(start.year, start.month, start.day))
+            b = ms.KIEV.localize(datetime(first_checked.year, first_checked.month, first_checked.day))
+            return await s.get_orders_exact(a, b)
+        finally:
+            await s.close()
+    now = {}
+    for o in retry(lambda: asyncio.run(fetch())):
+        if is_countable_order(o):
+            d = datetime.fromisoformat(o["createdAt"].replace("Z", "+00:00")).astimezone(ms.KIEV).date().isoformat()
+            now.setdefault(d, set()).add(str(o.get("orderNumber") or o.get("id")))
+    out = []
+    d = start
+    while d < first_checked:
+        prev = state_rnp.get(d.isoformat())
+        if prev:
+            had = {n for c in prev.values() for n in c.get("orders", {})}
+            if had != now.get(d.isoformat(), set()):
+                out.append(d)
+        d += timedelta(days=1)
+    return out
+
+
 # ─── Ефективність реклами 2 ─────────────────────────────────────────────
 def site_tab_day(day, prev, dry):
     from src.analyzer.site_orders import fetch_site_orders_for_date, group_by_ad_label
@@ -233,6 +271,12 @@ def main():
             if d == a.date - timedelta(days=1):  # позавчора: що з нього оплатили вчора
                 tot = lambda x: round(sum(c["to"] for c in x.values()), 2) if x else None
                 late_site_paid(d, tot(prev_rnp), tot(state["rnp"][d.isoformat()]))
+        stale = stale_rnp_days(days[0], state["rnp"])
+        if stale:
+            print(f" Старіші дні зі зміною оплачених замовлень: {', '.join(f'{d:%d.%m}' for d in stale)} — перераховую")
+        for d in stale:
+            time.sleep(SHEETS_PAUSE)
+            state["rnp"][d.isoformat()] = rnp_day(d, ov, state["rnp"].get(d.isoformat()), a.dry)
     if "ads" in blocks:
         print("Ефективність реклами 2")
         for d in days:
