@@ -23,6 +23,7 @@ import re
 import sys
 from difflib import SequenceMatcher
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import openpyxl
 
@@ -124,14 +125,17 @@ def parse_statement(path: str):
     return out
 
 
+KYIV = ZoneInfo("Europe/Kyiv")  # 13.11.2026: було фіксоване UTC+3 — узимку (UTC+2) замовлення після 23:00 «губились»
+
+
 async def load_orders(d1: date, d2: date):
-    a = datetime(d1.year, d1.month, d1.day, tzinfo=timezone(timedelta(hours=3))).astimezone(timezone.utc)
-    b = datetime(d2.year, d2.month, d2.day, tzinfo=timezone(timedelta(hours=3))).astimezone(timezone.utc) + timedelta(days=1)
+    a = datetime(d1.year, d1.month, d1.day, tzinfo=KYIV).astimezone(timezone.utc)
+    b = (datetime(d2.year, d2.month, d2.day, tzinfo=KYIV) + timedelta(days=1)).astimezone(timezone.utc)
     return await SitniksClient().get_orders_exact(a, b)
 
 
 def kyiv_day(iso: str) -> date:
-    return (datetime.fromisoformat(iso.replace("Z", "+00:00")) + timedelta(hours=3)).date()
+    return datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone(KYIV).date()
 
 
 def match(orders, payments, extended=frozenset()):
