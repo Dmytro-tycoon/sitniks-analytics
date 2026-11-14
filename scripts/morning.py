@@ -290,13 +290,40 @@ def main():
         print(f"Оплати {days[0]:%d.%m}–{days[-1]:%d.%m}")
         state["pay"] = payments(days[0], days[-1], ov, state.get("pay"))
     if "mgr" in blocks:
+        # mgr_move_day: {"2026-11-12": {"Даша": "2026-11-13"}} — дані менеджерки за день переносимо на інший
+        # (напр. вона не працювала, а замовлення/чати зарахувались через пізню оплату; користувач 14.11.2026)
+        moves = ov.get("mgr_move_day", {})
         mgr_days = [d for d in days if d >= MGR_START]
+        for src, mm in moves.items():
+            for t in mm.values():
+                if date.fromisoformat(src) in mgr_days and date.fromisoformat(t) not in mgr_days:
+                    mgr_days.append(date.fromisoformat(t))
+        mgr_days.sort()
+        cache = {}
+
+        def mgr_data(day):
+            if day not in cache:
+                cache[day] = retry(lambda: asyncio.run(ms.collect(day, ov.get("mgr_exclude_orders", []))))
+            return cache[day]
         if mgr_days:
             print("Звіт по менеджерам")
         for d in mgr_days:
             if not a.dry and not ms.has_channel_tab(d):
                 ms.create_month(d.year, d.month)
-            data = retry(lambda: asyncio.run(ms.collect(d, ov.get("mgr_exclude_orders", []))))
+            data = {m: v for m, v in mgr_data(d).items() if m not in moves.get(d.isoformat(), {})}
+            for src, mm in moves.items():
+                for m, t in mm.items():
+                    if t != d.isoformat() or m not in mgr_data(date.fromisoformat(src)):
+                        continue
+                    add = mgr_data(date.fromisoformat(src))[m]
+                    cur = data.setdefault(m, {**{ch: {"L": 0, "S": 0, "TO": 0.0} for ch in ms.CHANNELS}, "rep": 0, "items": 0})
+                    cur = data[m] = {**{ch: dict(cur[ch]) for ch in ms.CHANNELS}, "rep": cur["rep"], "items": cur["items"]}
+                    for ch in ms.CHANNELS:
+                        for k in ("L", "S", "TO"):
+                            cur[ch][k] += add[ch][k]
+                    cur["rep"] += add["rep"]
+                    cur["items"] += add["items"]
+                    print(f"  ↪ {m}: дані за {date.fromisoformat(src):%d.%m} перенесено на {d:%d.%m}")
             ms.show(d, data)
             if not a.dry:
                 ms.write(d, data)
