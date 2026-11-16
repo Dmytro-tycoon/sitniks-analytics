@@ -44,6 +44,8 @@ SHORT = {"Інстаграм": "Інст", "ФБ": "ФБ", "Сайт ФБ": "С�
 RECHECK_DAYS = 14  # скільки днів назад шукати пізно оплачені замовлення (13.11.2026)
 RECHECK_FROM = date(2026, 11, 6)  # раніше — ручні виправлення заявок у РНП (08.11), не переписуємо
 MGR_START = date(2026, 11, 1)  # з листопада — нова мотивація по каналах (30.10.2026)
+TRIAGE_TOL = 5  # ₴: у підказках платіж ≈ сума (напр. 8 320 за 8 317)
+SUM_DIFF_HIDE = 50  # 🟠 «сума не збігається» до 50 ₴ — не друкуємо (користувач 16.11.2026)
 SHEETS_PAUSE = 10  # квота Google Sheets: 60 читань/хв на сервісний акаунт
 
 
@@ -231,8 +233,12 @@ def payments(d1, d2, ov, prev_state):
           f"накладений платіж {len(res['cod_only'])}")
     for r, p in res["other_payer"]:
         print(f"  🟡 №{r['n']} {r['client']} {money(r['expected'])} ← {p['payer']} ({p['dt']})")
+    small = [x for x in res["sum_diff"] if abs(x[1]["amount"] - x[0]["expected"]) <= SUM_DIFF_HIDE]
     for r, p in res["sum_diff"]:  # noqa
-        print(f"  🟠 №{r['n']} {r['client']}: треба {money(r['expected'])}, прийшло {money(p['amount'])} ({p['dt']})")
+        if abs(p["amount"] - r["expected"]) > SUM_DIFF_HIDE:
+            print(f"  🟠 №{r['n']} {r['client']}: треба {money(r['expected'])}, прийшло {money(p['amount'])} ({p['dt']})")
+    if small:
+        print(f"  (ще {len(small)} з різницею до {SUM_DIFF_HIDE} ₴ — не показую)")
     for r, ps in res.get("cod_paid", []):
         print(f"  ⚠️ №{r['n']} {r['client']}: у Sitniks без передоплати (накладений {money(r['total'])}), "
               f"а надійшло {money(sum(p['amount'] for p in ps))} ₴ — подвійна оплата?")
@@ -244,7 +250,86 @@ def payments(d1, d2, ov, prev_state):
         print(f"  ❌ {r['day']:%d.%m}{note} №{r['n']} {r['client']} {r['phone']} — {money(r['expected'])} ₴ ({r['status']})")
     for p in res["unknown_payments"]:
         print(f"  ❓ {money(p['amount'])} ₴ {p['payer']} ({p['acct'].split()[1] if ' ' in p['acct'] else p['acct']}, {p['dt']})")
+    try:
+        triage(res)
+    except Exception as e:  # підказки — не критично для звіту
+        print(f"  (підказки по оплатах не вдались: {type(e).__name__}: {e})")
     return res["state"]
+
+
+def triage(res):
+    """Підказки: для кожного ❌ — невідомі платежі, що підходять за сумою (і сума двох платежів), з часом скріну
+    в чаті замовлення; для кожного ❓ — замовлення з такою передоплатою/сумою ±1 день і скрін у чаті поруч за часом.
+    Скрін = повідомлення з вкладенням у чаті замовлення (користувач 16.11.2026: менше ручного пошуку)."""
+    unpaid, unknown = res["unpaid"], res["unknown_payments"]
+    if not unpaid and not unknown:
+        return
+    from src.sitniks.client import SitniksClient
+    pdt = lambda p: ms.KIEV.localize(datetime.strptime(p["dt"], "%d.%m.%Y %H:%M"))
+    days = [r["day"] for r in unpaid] + [p["date"] for p in unknown]
+    lo, hi = min(days) - timedelta(days=1), max(days) + timedelta(days=2)
+
+    async def fetch():
+        s = SitniksClient()
+        try:
+            orders = await s.get_orders_exact(ms.KIEV.localize(datetime(lo.year, lo.month, lo.day)),
+                                              ms.KIEV.localize(datetime(hi.year, hi.month, hi.day)))
+            shots = {}
+            for o in orders:
+                cid = o.get("chatId")
+                if not cid:
+                    continue
+                msgs = await s.get_chat_messages(cid)
+                shots[str(o.get("orderNumber"))] = sorted(
+                    datetime.fromisoformat(m["createdAt"].replace("Z", "+00:00")).astimezone(ms.KIEV)
+                    for m in msgs if m.get("attachmentUrl") and m.get("createdAt", "") >= f"{lo.isoformat()}")
+            return orders, shots
+        finally:
+            await s.close()
+    orders, shots = retry(lambda: asyncio.run(fetch()))
+    byn = {str(o.get("orderNumber")): o for o in orders}
+
+    def near_shot(n, t, before=90, after=60):
+        """Найближчий за часом скрін у чаті замовлення: платіж до 90 хв після скріну або до 60 хв раніше."""
+        best = None
+        for sh in shots.get(str(n), []):
+            dm = (t - sh).total_seconds() / 60
+            if -after <= dm <= before and (best is None or abs(dm) < abs((t - best).total_seconds() / 60)):
+                best = sh
+        return best
+    gap = lambda sh, t: abs((t - sh).total_seconds() / 60) if sh else 9999
+    print(" Підказки по оплатах:")
+    for r in sorted(unpaid, key=lambda r: (r["day"], r["n"])):
+        cand = []
+        for p in unknown:
+            if abs(p["amount"] - r["expected"]) <= TRIAGE_TOL and abs((p["date"] - r["day"]).days) <= 1:
+                sh = near_shot(r["n"], pdt(p))
+                cand.append((gap(sh, pdt(p)), f"{money(p['amount'])} ₴ {p['payer']} {p['dt'][:5]} {p['dt'][-5:]}"
+                             + (f" — скрін у чаті {sh:%H:%M} ✓" if sh else "")))
+        for i, a in enumerate(unknown):  # оплата двома частинами
+            for b in unknown[i + 1:]:
+                if abs(a["amount"] + b["amount"] - r["expected"]) <= TRIAGE_TOL and abs((a["date"] - r["day"]).days) <= 1:
+                    cand.append((5000, f"{money(a['amount'])} + {money(b['amount'])} ₴ ({a['payer']} {a['dt'][-5:]}, {b['payer']} {b['dt'][-5:]})"))
+        sh = shots.get(str(r["n"]), [])
+        tail = f"скріни в чаті: {', '.join(f'{x:%d.%m %H:%M}' for x in sh[-3:])}" if sh else "скрінів у чаті немає / чат не прив'язаний"
+        txt = "; ".join(c for _, c in sorted(cand)[:3]) or "збігів серед невідомих платежів немає"
+        print(f"  ❌ №{r['n']} {r['client']}: {txt} | {tail}")
+    for p in unknown:
+        t, cand = pdt(p), []
+        for n, o in byn.items():
+            pre = float((o.get("payment") or {}).get("amount") or 0)
+            tot = float(o.get("totalPriceDiscount") or 0)
+            if not (abs(pre - p["amount"]) <= TRIAGE_TOL or abs(tot - p["amount"]) <= TRIAGE_TOL):
+                continue
+            cr = datetime.fromisoformat(o["createdAt"].replace("Z", "+00:00")).astimezone(ms.KIEV)
+            if abs((cr.date() - p["date"]).days) > 1:
+                continue
+            sh = near_shot(n, t)
+            nm = ((o.get("client") or {}).get("fullname") or "").strip()
+            st = ((o.get("status") or {}).get("title") or "").strip()
+            cand.append((gap(sh, t), f"№{n} {nm} ({st})" + (f" — скрін {sh:%H:%M} ✓" if sh else "")))
+        txt = "; ".join(c for _, c in sorted(cand)[:3]) or "замовлень з такою сумою немає"
+        print(f"  ❓ {money(p['amount'])} ₴ {p['payer']} {p['dt']}: {txt}")
 
 
 def main():
