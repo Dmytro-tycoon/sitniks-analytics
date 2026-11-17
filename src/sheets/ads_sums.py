@@ -3,12 +3,14 @@ Google Sheets writer для сум замовлень по рекламних п
 
 Схема таблиці (лист "Інстаграм" у Sheet ID = ADS_SHEET_ID):
     A: Реклама (adTitle)
-    B: Всього ₴ (формула =SUM(C{row}:NV{row}))
-    C: Січень (label)
-    D..AH: 01.01, 02.01, ..., 31.01
-    AI: Лютий (label)
+    B..F: Кабінет · Статус · Сигнал · ROAS 7 днів · ROAS 30 днів
+          (з 17.11.2026; пише scripts/ad_chat_value.py, цей модуль їх не чіпає)
+    G: Всього ₴ (формула =SUM(H{row}:OA{row}))
+    H: Січень (label)
+    I..AM: 01.01, 02.01, ..., 31.01
+    AN: Лютий (label)
     ...
-    Всього 12 місяців × 32 колонки (1 label + 31 дат) = 384 колонки + 2 = 386.
+    Всього 12 місяців × 32 колонки (1 label + 31 дат) = 384 колонки + 7 = 391.
 
 Для кожного дня cron-job (з ads_bot):
     1. Отримує суми по adTitle зі свіжого build_ad_report(exclude_reported=False)
@@ -40,13 +42,17 @@ MONTHS_UA = [
 SHEET_NAME = "Інстаграм"
 YEAR = 2026  # Поки хардкод, потім розширимо на 2027 коли треба
 
-# Колонки: A=1(Реклама), B=2(Всього), далі 12*(1 label + 31 дат)
-LAST_COL_INDEX = 2 + 12 * 32  # = 386
-TOTAL_FORMULA_END_COL = "NV"  # = col_letter(386)
+# Колонки: A=1(Реклама), B..F = META_COLS, G=7(Всього), далі 12*(1 label + 31 дат)
+META_COLS = ["Кабінет", "Статус", "Сигнал", "ROAS 7 днів", "ROAS 30 днів"]
+TOTAL_COL = 2 + len(META_COLS)            # = 7 → "G"
+TOTAL_COL_LETTER = "G"
+FIRST_GRID_COL_LETTER = "H"               # «Січень» (мітка місяця)
+LAST_COL_INDEX = TOTAL_COL + 12 * 32      # = 391
+TOTAL_FORMULA_END_COL = "OA"              # = col_letter(391)
 
 
 def col_letter(n: int) -> str:
-    """1 → 'A', 26 → 'Z', 27 → 'AA', 386 → 'NV'."""
+    """1 → 'A', 26 → 'Z', 27 → 'AA', 391 → 'OA'."""
     s = ""
     while n > 0:
         n, r = divmod(n - 1, 26)
@@ -55,8 +61,8 @@ def col_letter(n: int) -> str:
 
 
 def col_for_date(d: date) -> int:
-    """1-based col для конкретної дати. 01.01 → 4, 31.01 → 34, 01.02 → 36 і т.д."""
-    return 3 + (d.month - 1) * 32 + d.day
+    """1-based col для конкретної дати. 01.01 → 9 (I), 31.01 → 39, 01.02 → 41 і т.д."""
+    return TOTAL_COL + 1 + (d.month - 1) * 32 + d.day
 
 
 def _get_service():
@@ -89,7 +95,7 @@ class AdsSumsSheet:
         raise RuntimeError(f"Sheet {self.sheet_name!r} not found in spreadsheet")
 
     def ensure_capacity(self):
-        """Розширює лист до потрібної к-сті колонок (386)."""
+        """Розширює лист до потрібної к-сті колонок (391)."""
         sheet_id, rows, cols = self._get_sheet_id_and_size()
         if cols >= LAST_COL_INDEX:
             return
@@ -112,13 +118,16 @@ class AdsSumsSheet:
         # Читаємо A1
         r = self.service.spreadsheets().values().get(
             spreadsheetId=self.spreadsheet_id,
-            range=f"{self.sheet_name}!A1:B1",
+            range=f"{self.sheet_name}!A1:{TOTAL_COL_LETTER}1",
         ).execute()
         current = r.get("values", [[]])[0] if r.get("values") else []
-        if current and current[:2] == ["Реклама", "Всього ₴"]:
+        if current and current[0] == "Реклама" and len(current) >= TOTAL_COL and current[TOTAL_COL - 1] == "Всього ₴":
             return  # вже готово
+        if current and current[:2] == ["Реклама", "Всього ₴"]:
+            # стара розмітка без стовпчиків B..F — не перезаписуємо заголовок поверх даних
+            raise RuntimeError(f"{self.sheet_name}: old layout (Всього in B) — insert 5 columns after A first")
 
-        header = ["Реклама", "Всього ₴"]
+        header = ["Реклама"] + META_COLS + ["Всього ₴"]
         for m in range(1, 13):
             header.append(MONTHS_UA[m - 1])
             for day in range(1, 32):
@@ -224,8 +233,8 @@ class AdsSumsSheet:
         for title in sums_by_ad:
             row = row_map[title]
             updates.append({
-                "range": f"{self.sheet_name}!B{row}",
-                "values": [[f"=SUM(C{row}:{TOTAL_FORMULA_END_COL}{row})"]],
+                "range": f"{self.sheet_name}!{TOTAL_COL_LETTER}{row}",
+                "values": [[f"=SUM({FIRST_GRID_COL_LETTER}{row}:{TOTAL_FORMULA_END_COL}{row})"]],
             })
 
         if not updates:

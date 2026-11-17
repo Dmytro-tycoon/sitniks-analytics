@@ -1,16 +1,22 @@
-"""«Дохід на заявку» по оголошеннях Instagram (кабінет Skin One new).
+"""ROAS по оголошеннях → стовпчики B..F вкладок «Інстаграм» і «Сайт» («Ефективність реклами 2»).
 
-Дохід — з вкладки «Інстаграм» таблиці «Ефективність реклами 2» (сума замовлень
-по назві оголошення за день). Витрати й заявки (почато переписок) — Meta API.
-Пише вкладку «Дохід на заявку» (повністю генерується, ручних значень немає).
+B Кабінет · C Статус · D Сигнал · E ROAS 7 днів · F ROAS 30 днів  (вікно закінчується днем d_end).
 
-Сигнал — за окупністю (дохід/витрати) за 7 днів, якщо заявок ≥10, інакше за 30 днів:
-  🟢 ≥2,5 · 🟡 1,8–2,49 (біля беззбитковості) · 🔴 <1,8 · ⚪ мало даних (<10 заявок).
-Дохід на заявку пояснює причину: низький при дешевих заявках — нормально (FB),
-низький при дорогих — заявки «не купують» (пізнавальний креатив, без пропозиції).
+ROAS = дохід ÷ витрати. Дохід — суми з сітки дат цієї ж вкладки (замовлення по мітці реклами).
+Витрати:
+  «Інстаграм» — реклама на переписку (optimization_goal REPLIES/CONVERSATIONS):
+      Skin One new — Meta API; основний кабінет — CSV з Ads Manager
+      (ads_main/main_{7,30}d_DDMM.csv, рівень «Объявления»; без CSV — не враховано).
+      Зв'язок — назва оголошення = мітка рядка.
+  «Сайт» — мітка «meta / <кампанія> / <ID групи/оголошення> / … (fbclid)»: витрати Skin One new
+      по цьому ID (група оголошень, оголошення або кампанія); «… (gclid)» — увесь Google Ads.
+      Мітки без ID / без реклами (прямі, link_in_bio, бот…) — порожньо.
+Сигнал (за 7 днів; якщо витрат за 7 днів < MIN_SPEND — за 30 днів):
+  🟢 ROAS ≥ 2,5 · 🟡 1,8–2,49 (біля беззбитковості) · 🔴 < 1,8 · ⚪ мало даних.
 
 Запуск: python scripts/ad_chat_value.py [YYYY-MM-DD]   (за замовчуванням — вчора, Київ)
 """
+import csv
 import json
 import os
 import re
@@ -24,49 +30,56 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dotenv import load_dotenv  # noqa: E402
 
 load_dotenv()
-from src.sheets.ads_sums import SHEET_NAME, _get_service, col_for_date, col_letter  # noqa: E402
+from src.sheets.ads_sums import (META_COLS, SHEET_NAME, WEBSITE_SHEET_NAME, _get_service,  # noqa: E402
+                                 col_for_date, col_letter)
 
-SHEET_ID = "1vM6SIydglC0K0b-bZE5woq--2CK-BubXL8yfdnJqweQ"
-TAB = "Дохід на заявку"
+SHEET_ID = os.getenv("ADS_SHEET_ID", "1vM6SIydglC0K0b-bZE5woq--2CK-BubXL8yfdnJqweQ")
 ACCOUNT = "act_903156589086283"  # Skin One new
-CHAT = "onsite_conversion.messaging_conversation_started_7d"
-WINDOWS = (7, 30)
-GOOD, BAD, MIN_CHATS = 2.5, 1.8, 10
 MSG_GOALS = {"REPLIES", "CONVERSATIONS"}
+WINDOWS = (7, 30)
+GOOD, BAD = 2.5, 1.8
+MIN_SPEND = 500  # ₴ за вікно сигналу; менше — «мало даних»
+MAIN_DIR = os.path.expanduser("~/Documents/ШІ/morning_tools/ads_main")
+OLD_TAB = "Дохід на заявку"
 
 norm = lambda s: re.sub(r"\s+", " ", s or "").strip().lower()
+ID_RE = re.compile(r"\b(1202\d{14})\b")
 
 
-def meta_insights(since: date, until: date) -> dict:
+def meta_ads(since: date, until: date) -> list:
     tok = os.environ["FB_ACCESS_TOKEN"]
     p = {"access_token": tok, "level": "ad", "limit": 500,
-         "fields": "ad_id,ad_name,spend,actions,optimization_goal",
+         "fields": "ad_id,ad_name,adset_id,campaign_id,spend,optimization_goal",
          "time_range": json.dumps({"since": since.isoformat(), "until": until.isoformat()})}
     url = f"https://graph.facebook.com/v25.0/{ACCOUNT}/insights?" + urllib.parse.urlencode(p)
-    out = {}
+    out = []
     while url:
         r = json.load(urllib.request.urlopen(url, timeout=120))
-        for x in r.get("data", []):
-            if x.get("optimization_goal") not in MSG_GOALS:  # лише реклама на переписку (не каталог/сайт/кліки)
-                continue
-            chats = sum(float(a["value"]) for a in x.get("actions", []) if a["action_type"] == CHAT)
-            o = out.setdefault(norm(x["ad_name"]), {"name": x["ad_name"], "spend": 0.0, "chats": 0.0, "ids": set()})
-            o["spend"] += float(x["spend"]); o["chats"] += chats; o["ids"].add(x["ad_id"])
+        out += r.get("data", [])
         url = r.get("paging", {}).get("next")
     return out
 
 
-MAIN_DIR = os.path.expanduser("~/Documents/ШІ/morning_tools/ads_main")
+def meta_active_ids() -> set:
+    """ID оголошень, груп і кампаній, де є хоч одне ACTIVE оголошення (для «Статус»)."""
+    tok = os.environ["FB_ACCESS_TOKEN"]
+    p = {"access_token": tok, "limit": 500, "fields": "id,adset_id,campaign_id,effective_status",
+         "filtering": json.dumps([{"field": "effective_status", "operator": "IN", "value": ["ACTIVE"]}])}
+    url = f"https://graph.facebook.com/v25.0/{ACCOUNT}/ads?" + urllib.parse.urlencode(p)
+    ids = set()
+    while url:
+        r = json.load(urllib.request.urlopen(url, timeout=120))
+        for a in r.get("data", []):
+            ids |= {a["id"], a.get("adset_id"), a.get("campaign_id")}
+        url = r.get("paging", {}).get("next")
+    return ids
 
 
-def main_csv(w: int, d_end: date) -> dict:
-    """Основний кабінет (немає доступу через API): CSV з Ads Manager, рівень «Объявления»,
-    файл ads_main/main_{w}d_{DDMM}.csv за останні w днів по d_end. Реклама на кліки
-    (багато кліків, майже без переписок) відкидається."""
+def main_csv(w: int, d_end: date):
+    """Основний кабінет (без API): {назва: [витрати, активне]} або None, якщо файлу немає."""
     path = os.path.join(MAIN_DIR, f"main_{w}d_{d_end:%d%m}.csv")
     if not os.path.exists(path):
-        return {}
-    import csv
+        return None
     out = {}
     for x in csv.DictReader(open(path, encoding="utf-8-sig")):
         nm = x.get("Название объявления") or ""
@@ -74,108 +87,172 @@ def main_csv(w: int, d_end: date) -> dict:
             continue
         f = lambda k: float(x.get(k) or 0)
         sp, ch, clk = f("Потраченная сумма (UAH)"), f("Начата переписка"), f("Клики по ссылке")
-        if clk > 200 and ch < clk / 20:
+        if clk > 200 and ch < clk / 20:  # реклама на кліки / відвідування профілю
             continue
-        o = out.setdefault(norm(nm), {"name": nm, "spend": 0.0, "chats": 0.0, "active": False})
-        o["spend"] += sp; o["chats"] += ch; o["active"] |= (x.get("Показ рекламы") == "active")
+        o = out.setdefault(norm(nm), [0.0, False])
+        o[0] += sp
+        o[1] |= (x.get("Показ рекламы") == "active")
     return out
 
 
-def ad_status(ids: set) -> str:
-    tok = os.environ["FB_ACCESS_TOKEN"]
-    url = "https://graph.facebook.com/v25.0/?" + urllib.parse.urlencode(
-        {"access_token": tok, "ids": ",".join(list(ids)[:50]), "fields": "effective_status"})
-    r = json.load(urllib.request.urlopen(url, timeout=60))
-    st = {v.get("effective_status") for v in r.values()}
-    return "активне" if "ACTIVE" in st else "вимкнене"
+def google_spend(since: date, until: date) -> float:
+    from src.google_ads import client as g
+    rows = g.search("SELECT metrics.cost_micros FROM campaign "
+                    f"WHERE segments.date BETWEEN '{since.isoformat()}' AND '{until.isoformat()}'")
+    return sum(int(r.get("metrics", {}).get("costMicros", 0)) for r in rows) / 1e6
 
 
-def sheet_revenue(svc, d_end: date, days: int) -> dict:
-    rng = f"'{SHEET_NAME}'!A1:{col_letter(col_for_date(date(d_end.year, 12, 31)))}1500"
+def google_active() -> bool:
+    from src.google_ads import client as g
+    return bool(g.search("SELECT campaign.id FROM campaign WHERE campaign.status = 'ENABLED'"))
+
+
+def read_tab(svc, tab: str, d_end: date):
+    rng = f"'{tab}'!A1:{col_letter(col_for_date(date(d_end.year, 12, 31)))}3000"
     rows = svc.spreadsheets().values().get(spreadsheetId=SHEET_ID, range=rng,
                                            valueRenderOption="UNFORMATTED_VALUE").execute().get("values", [])
+    if not rows or len(rows[0]) < 7 or rows[0][6] != "Всього ₴":
+        raise RuntimeError(f"{tab}: очікую «Всього ₴» у G1 (нова розмітка)")
+    return rows
+
+
+def revenue(row: list, d_end: date, days: int) -> float:
     cols = [col_for_date(d_end - timedelta(i)) - 1 for i in range(days) if (d_end - timedelta(i)).year == d_end.year]
-    rev = {}
-    for r in rows[1:]:
+    return sum(float(row[c]) for c in cols if c < len(row) and isinstance(row[c], (int, float)))
+
+
+def signal(sp7, rv7, sp30, rv30):
+    if sp7 >= MIN_SPEND:
+        roas, tag = rv7 / sp7, ""
+    elif sp30 >= MIN_SPEND:
+        roas, tag = rv30 / sp30, " (30 дн.)"
+    else:
+        return "⚪ мало даних"
+    return ("🟢" if roas >= GOOD else "🟡" if roas >= BAD else "🔴") + tag
+
+
+def fmt_roas(rv, sp):
+    return round(rv / sp, 2) if sp >= 1 else ""
+
+
+def build_instagram(rows, d_end, ads, active_ids, mains):
+    """{row_index: [Кабінет, Статус, Сигнал, ROAS7, ROAS30]}"""
+    new = {w: {} for w in WINDOWS}   # назва → [витрати, ids]
+    for w in WINDOWS:
+        for x in ads[w]:
+            if x.get("optimization_goal") not in MSG_GOALS:
+                continue
+            o = new[w].setdefault(norm(x["ad_name"]), [0.0, set()])
+            o[0] += float(x["spend"])
+            o[1].add(x["ad_id"])
+    out = {}
+    for i, r in enumerate(rows[1:], start=2):
         if not r or not str(r[0]).strip():
             continue
-        s = sum(float(r[c]) for c in cols if c < len(r) and isinstance(r[c], (int, float)))
-        rev[norm(r[0])] = rev.get(norm(r[0]), 0) + s
-    return rev
+        k = norm(r[0])
+        if k in new[30]:
+            acct = "Skin One new"
+            sp = {w: new[w].get(k, [0.0])[0] for w in WINDOWS}
+            status = "активне" if new[30][k][1] & active_ids else "вимкнене"
+        elif mains[30] and k in mains[30]:
+            acct = "Основний"
+            sp = {w: (mains[w] or {}).get(k, [0.0])[0] for w in WINDOWS}
+            status = "активне" if mains[30][k][1] else "вимкнене"
+        else:
+            continue
+        rv = {w: revenue(r, d_end, w) for w in WINDOWS}
+        out[i] = [acct, status, signal(sp[7], rv[7], sp[30], rv[30]), fmt_roas(rv[7], sp[7]), fmt_roas(rv[30], sp[30])]
+    return out
 
 
-def signal(roas, chats):
-    if chats < MIN_CHATS or roas is None:
-        return "⚪ мало даних"
-    return "🟢" if roas >= GOOD else ("🟡" if roas >= BAD else "🔴")
+def build_site(rows, d_end, ads, active_ids, g_spend, g_active):
+    by_id = {w: {} for w in WINDOWS}
+    for w in WINDOWS:
+        for x in ads[w]:
+            for idk in ("ad_id", "adset_id", "campaign_id"):
+                by_id[w][x[idk]] = by_id[w].get(x[idk], 0.0) + float(x["spend"])
+    groups = {}  # ключ витрат → [row_index...]
+    for i, r in enumerate(rows[1:], start=2):
+        if not r or not str(r[0]).strip():
+            continue
+        lab = str(r[0])
+        m = ID_RE.search(lab)
+        if "(gclid)" in lab or lab.lower().startswith("google /"):
+            groups.setdefault("google", []).append(i)
+        elif m and lab.lower().startswith("meta"):
+            groups.setdefault(m.group(1), []).append(i)
+    out = {}
+    for key, idx in groups.items():
+        rv = {w: sum(revenue(rows[i - 1], d_end, w) for i in idx) for w in WINDOWS}
+        if key == "google":
+            sp, acct, status = g_spend, "Google Ads", ("активне" if g_active else "вимкнене")
+        else:
+            sp = {w: by_id[w].get(key, 0.0) for w in WINDOWS}
+            acct, status = "Skin One new", ("активне" if key in active_ids else "вимкнене")
+        if sp[30] < 1:
+            continue
+        line = [acct, status, signal(sp[7], rv[7], sp[30], rv[30]), fmt_roas(rv[7], sp[7]), fmt_roas(rv[30], sp[30])]
+        for i in idx:
+            out[i] = line
+    return out
+
+
+def write(svc, tab, rows, data, note):
+    n = len(rows)
+    vals = [data.get(i, ["", "", "", "", ""]) for i in range(2, n + 1)]
+    svc.spreadsheets().values().batchUpdate(spreadsheetId=SHEET_ID, body={"valueInputOption": "RAW", "data": [
+        {"range": f"'{tab}'!B1:F1", "values": [META_COLS]},
+        {"range": f"'{tab}'!B2:F{n}", "values": vals},
+    ]}).execute()
+    meta = svc.spreadsheets().get(spreadsheetId=SHEET_ID, fields="sheets.properties").execute()
+    sid = next(s["properties"]["sheetId"] for s in meta["sheets"] if s["properties"]["title"] == tab)
+    svc.spreadsheets().batchUpdate(spreadsheetId=SHEET_ID, body={"requests": [
+        {"updateCells": {"range": {"sheetId": sid, "startRowIndex": 0, "endRowIndex": 1,
+                                   "startColumnIndex": 3, "endColumnIndex": 4},
+                         "rows": [{"values": [{"note": note}]}], "fields": "note"}},
+    ]}).execute()
 
 
 def main(d_end: date):
     svc = _get_service()
-    data = {}
-    main_files = []
-    for w in WINDOWS:
-        ins = meta_insights(d_end - timedelta(w - 1), d_end)
-        rev = sheet_revenue(svc, d_end, w)
-        for k, v in ins.items():
-            row = data.setdefault(("new", k), {"name": v["name"], "ids": set(), "acct": "Skin One new"})
-            row["ids"] |= v["ids"]
-            row[w] = {"spend": v["spend"], "chats": v["chats"], "rev": rev.get(k, 0.0)}
-        mc = main_csv(w, d_end)
-        if mc:
-            main_files.append(f"{w}д")
-        for k, v in mc.items():
-            row = data.setdefault(("main", k), {"name": v["name"], "acct": "Основний", "active": False})
-            row["active"] |= v["active"]
-            row[w] = {"spend": v["spend"], "chats": v["chats"], "rev": rev.get(k, 0.0)}
-    rows = []
-    for k, r in data.items():
-        if r.get(30, {}).get("spend", 0) < 1:
-            continue
-        r["status"] = ad_status(r["ids"]) if r["acct"] == "Skin One new" else ("активне" if r["active"] else "вимкнене")
-        main_part, ref_part = [], []
-        for w in WINDOWS:
-            m = r.get(w, {"spend": 0, "chats": 0, "rev": 0})
-            ch, sp, rv = m["chats"], m["spend"], m["rev"]
-            r[f"roas{w}"], r[f"ch{w}"] = (rv / sp if sp else None), ch
-            main_part += [round(sp), round(rv)]
-            ref_part += [int(ch), round(sp / ch) if ch else "", round(rv / ch) if ch else ""]
-        use = 7 if r["ch7"] >= MIN_CHATS else 30
-        sig = signal(r[f"roas{use}"], r[f"ch{use}"]) + ("" if use == 7 else " (30 дн.)")
-        roas = [round(r[f"roas{w}"], 2) if r[f"roas{w}"] is not None else "" for w in WINDOWS]
-        line = [r["name"], r["acct"], r["status"], sig] + roas + main_part + [""] + ref_part
-        rows.append((r["status"] != "активне", -(r.get(7, {}).get("spend", 0)), -(r[30]["spend"]), line))
-    rows.sort(key=lambda x: x[:3])
-    hdr1 = [f"Оновлено {datetime.now(ZoneInfo('Europe/Kyiv')):%d.%m %H:%M} · дані по {d_end:%d.%m} · кабінети: Skin One new (API) + основний ("
-            f"{'CSV з Ads Manager: ' + ', '.join(main_files) if main_files else 'немає CSV — не враховано'}) · "
-            f"ROAS = дохід ÷ витрати; дохід = замовлення з вкладки «Інстаграм» по назві оголошення; беззбитковість ≈ 1,8"]
-    hdr2 = ["Оголошення", "Кабінет", "Статус", "Сигнал (🟢 ROAS ≥2,5 · 🟡 1,8–2,49 · 🔴 <1,8; за 7 дн., або 30 дн. якщо заявок <10)",
-            "ROAS 7д", "ROAS 30д", "Витрати 7д", "Дохід 7д", "Витрати 30д", "Дохід 30д",
-            "Довідка →", "Заявки 7д", "Ціна заявки 7д", "Дохід/заявку 7д", "Заявки 30д", "Ціна заявки 30д", "Дохід/заявку 30д"]
-    values = [hdr1, hdr2] + [x[3] for x in rows]
+    ads = {w: meta_ads(d_end - timedelta(w - 1), d_end) for w in WINDOWS}
+    active_ids = meta_active_ids()
+    mains = {w: main_csv(w, d_end) for w in WINDOWS}
+    try:
+        g_spend = {w: google_spend(d_end - timedelta(w - 1), d_end) for w in WINDOWS}
+        g_act = google_active()
+    except Exception as e:  # Google Ads недоступний — сайт без Google
+        print(f"[ad_chat_value] Google Ads: {e}")
+        g_spend, g_act = {w: 0.0 for w in WINDOWS}, False
+    stamp = f"{datetime.now(ZoneInfo('Europe/Kyiv')):%d.%m %H:%M}"
+    base = (f"Оновлено {stamp}, дані по {d_end:%d.%m}. ROAS = дохід ÷ витрати; беззбитковість ≈ 1,8.\n"
+            f"🟢 ≥2,5 · 🟡 1,8–2,49 · 🔴 <1,8 · ⚪ мало даних (витрат <{MIN_SPEND} ₴ і за 7, і за 30 днів). "
+            f"Сигнал за 7 днів; «(30 дн.)» — якщо за 7 днів витрат <{MIN_SPEND} ₴.")
+
+    ig_rows = read_tab(svc, SHEET_NAME, d_end)
+    ig = build_instagram(ig_rows, d_end, ads, active_ids, mains)
+    main_note = "основний кабінет — CSV з Ads Manager" if mains[30] else "основний кабінет НЕ враховано (немає CSV за цей день)"
+    write(svc, SHEET_NAME, ig_rows, ig, base + f"\nІнстаграм: реклама на переписку; Skin One new — API, {main_note}.")
+
+    site_rows = read_tab(svc, WEBSITE_SHEET_NAME, d_end)
+    site = build_site(site_rows, d_end, ads, active_ids, g_spend, g_act)
+    write(svc, WEBSITE_SHEET_NAME, site_rows, site,
+          base + "\nСайт: витрати Skin One new за ID групи/оголошення з мітки; (gclid) — увесь Google Ads.")
 
     meta = svc.spreadsheets().get(spreadsheetId=SHEET_ID, fields="sheets.properties").execute()
-    tabs = {s["properties"]["title"]: s["properties"]["sheetId"] for s in meta["sheets"]}
-    if TAB not in tabs:
-        rep = svc.spreadsheets().batchUpdate(spreadsheetId=SHEET_ID, body={"requests": [
-            {"addSheet": {"properties": {"title": TAB, "gridProperties": {"frozenRowCount": 2, "frozenColumnCount": 1}}}}]}).execute()
-        tabs[TAB] = rep["replies"][0]["addSheet"]["properties"]["sheetId"]
-    svc.spreadsheets().values().clear(spreadsheetId=SHEET_ID, range=f"'{TAB}'!A1:Z2000").execute()
-    svc.spreadsheets().values().update(spreadsheetId=SHEET_ID, range=f"'{TAB}'!A1", valueInputOption="RAW",
-                                       body={"values": values}).execute()
-    svc.spreadsheets().batchUpdate(spreadsheetId=SHEET_ID, body={"requests": [
-        {"repeatCell": {"range": {"sheetId": tabs[TAB], "startRowIndex": 1, "endRowIndex": 2},
-                        "cell": {"userEnteredFormat": {"textFormat": {"bold": True}, "wrapStrategy": "WRAP"}},
-                        "fields": "userEnteredFormat(textFormat,wrapStrategy)"}},
-        {"updateDimensionProperties": {"range": {"sheetId": tabs[TAB], "dimension": "COLUMNS", "startIndex": 0, "endIndex": 1},
-                                       "properties": {"pixelSize": 360}, "fields": "pixelSize"}},
-    ]}).execute()
-    print(f"[ad_chat_value] {TAB}: {len(rows)} оголошень, дані по {d_end}")
-    return values
+    old = [s["properties"]["sheetId"] for s in meta["sheets"] if s["properties"]["title"] == OLD_TAB]
+    if old:
+        svc.spreadsheets().batchUpdate(spreadsheetId=SHEET_ID, body={"requests": [{"deleteSheet": {"sheetId": old[0]}}]}).execute()
+
+    print(f"[ad_chat_value] {d_end}: Інстаграм {len(ig)} рядків, Сайт {len(site)} рядків"
+          f"{'' if mains[30] else ' (основний кабінет без CSV)'}")
+    return ig_rows, ig, site_rows, site
 
 
 if __name__ == "__main__":
     d = date.fromisoformat(sys.argv[1]) if len(sys.argv) > 1 else datetime.now(ZoneInfo("Europe/Kyiv")).date() - timedelta(1)
-    for v in main(d)[2:]:
-        if v[2] == "активне":
-            print(" | ".join(str(x) for x in v))
+    ig_rows, ig, site_rows, site = main(d)
+    for rows, data in ((ig_rows, ig), (site_rows, site)):
+        for i, v in sorted(data.items()):
+            if v[1] == "активне":
+                print(" | ".join(str(x) for x in [str(rows[i - 1][0])[:60]] + v))
