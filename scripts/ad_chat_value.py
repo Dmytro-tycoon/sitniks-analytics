@@ -56,6 +56,31 @@ def meta_insights(since: date, until: date) -> dict:
     return out
 
 
+MAIN_DIR = os.path.expanduser("~/Documents/ШІ/morning_tools/ads_main")
+
+
+def main_csv(w: int, d_end: date) -> dict:
+    """Основний кабінет (немає доступу через API): CSV з Ads Manager, рівень «Объявления»,
+    файл ads_main/main_{w}d_{DDMM}.csv за останні w днів по d_end. Реклама на кліки
+    (багато кліків, майже без переписок) відкидається."""
+    path = os.path.join(MAIN_DIR, f"main_{w}d_{d_end:%d%m}.csv")
+    if not os.path.exists(path):
+        return {}
+    import csv
+    out = {}
+    for x in csv.DictReader(open(path, encoding="utf-8-sig")):
+        nm = x.get("Название объявления") or ""
+        if not nm:
+            continue
+        f = lambda k: float(x.get(k) or 0)
+        sp, ch, clk = f("Потраченная сумма (UAH)"), f("Начата переписка"), f("Клики по ссылке")
+        if clk > 200 and ch < clk / 20:
+            continue
+        o = out.setdefault(norm(nm), {"name": nm, "spend": 0.0, "chats": 0.0, "active": False})
+        o["spend"] += sp; o["chats"] += ch; o["active"] |= (x.get("Показ рекламы") == "active")
+    return out
+
+
 def ad_status(ids: set) -> str:
     tok = os.environ["FB_ACCESS_TOKEN"]
     url = "https://graph.facebook.com/v25.0/?" + urllib.parse.urlencode(
@@ -88,18 +113,26 @@ def signal(roas, chats):
 def main(d_end: date):
     svc = _get_service()
     data = {}
+    main_files = []
     for w in WINDOWS:
         ins = meta_insights(d_end - timedelta(w - 1), d_end)
         rev = sheet_revenue(svc, d_end, w)
         for k, v in ins.items():
-            row = data.setdefault(k, {"name": v["name"], "ids": set()})
+            row = data.setdefault(("new", k), {"name": v["name"], "ids": set(), "acct": "Skin One new"})
             row["ids"] |= v["ids"]
+            row[w] = {"spend": v["spend"], "chats": v["chats"], "rev": rev.get(k, 0.0)}
+        mc = main_csv(w, d_end)
+        if mc:
+            main_files.append(f"{w}д")
+        for k, v in mc.items():
+            row = data.setdefault(("main", k), {"name": v["name"], "acct": "Основний", "active": False})
+            row["active"] |= v["active"]
             row[w] = {"spend": v["spend"], "chats": v["chats"], "rev": rev.get(k, 0.0)}
     rows = []
     for k, r in data.items():
         if r.get(30, {}).get("spend", 0) < 1:
             continue
-        r["status"] = ad_status(r["ids"])
+        r["status"] = ad_status(r["ids"]) if r["acct"] == "Skin One new" else ("активне" if r["active"] else "вимкнене")
         main_part, ref_part = [], []
         for w in WINDOWS:
             m = r.get(w, {"spend": 0, "chats": 0, "rev": 0})
@@ -110,12 +143,13 @@ def main(d_end: date):
         use = 7 if r["ch7"] >= MIN_CHATS else 30
         sig = signal(r[f"roas{use}"], r[f"ch{use}"]) + ("" if use == 7 else " (30 дн.)")
         roas = [round(r[f"roas{w}"], 2) if r[f"roas{w}"] is not None else "" for w in WINDOWS]
-        line = [r["name"], r["status"], sig] + roas + main_part + [""] + ref_part
+        line = [r["name"], r["acct"], r["status"], sig] + roas + main_part + [""] + ref_part
         rows.append((r["status"] != "активне", -(r.get(7, {}).get("spend", 0)), -(r[30]["spend"]), line))
     rows.sort(key=lambda x: x[:3])
-    hdr1 = [f"Оновлено {datetime.now(ZoneInfo('Europe/Kyiv')):%d.%m %H:%M} · дані по {d_end:%d.%m} · кабінет Skin One new · "
+    hdr1 = [f"Оновлено {datetime.now(ZoneInfo('Europe/Kyiv')):%d.%m %H:%M} · дані по {d_end:%d.%m} · кабінети: Skin One new (API) + основний ("
+            f"{'CSV з Ads Manager: ' + ', '.join(main_files) if main_files else 'немає CSV — не враховано'}) · "
             f"ROAS = дохід ÷ витрати; дохід = замовлення з вкладки «Інстаграм» по назві оголошення; беззбитковість ≈ 1,8"]
-    hdr2 = ["Оголошення", "Статус", "Сигнал (🟢 ROAS ≥2,5 · 🟡 1,8–2,49 · 🔴 <1,8; за 7 дн., або 30 дн. якщо заявок <10)",
+    hdr2 = ["Оголошення", "Кабінет", "Статус", "Сигнал (🟢 ROAS ≥2,5 · 🟡 1,8–2,49 · 🔴 <1,8; за 7 дн., або 30 дн. якщо заявок <10)",
             "ROAS 7д", "ROAS 30д", "Витрати 7д", "Дохід 7д", "Витрати 30д", "Дохід 30д",
             "Довідка →", "Заявки 7д", "Ціна заявки 7д", "Дохід/заявку 7д", "Заявки 30д", "Ціна заявки 30д", "Дохід/заявку 30д"]
     values = [hdr1, hdr2] + [x[3] for x in rows]
@@ -143,5 +177,5 @@ def main(d_end: date):
 if __name__ == "__main__":
     d = date.fromisoformat(sys.argv[1]) if len(sys.argv) > 1 else datetime.now(ZoneInfo("Europe/Kyiv")).date() - timedelta(1)
     for v in main(d)[2:]:
-        if v[1] == "активне":
+        if v[2] == "активне":
             print(" | ".join(str(x) for x in v))
