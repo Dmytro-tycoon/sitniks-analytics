@@ -121,11 +121,8 @@ class AdsSumsSheet:
             range=f"{self.sheet_name}!A1:{TOTAL_COL_LETTER}1",
         ).execute()
         current = r.get("values", [[]])[0] if r.get("values") else []
-        if current and current[0] == "Реклама" and len(current) >= TOTAL_COL and current[TOTAL_COL - 1] == "Всього ₴":
-            return  # вже готово
-        if current and current[:2] == ["Реклама", "Всього ₴"]:
-            # стара розмітка без стовпчиків B..F — не перезаписуємо заголовок поверх даних
-            raise RuntimeError(f"{self.sheet_name}: old layout (Всього in B) — insert 5 columns after A first")
+        if current and current[0] == "Реклама" and "Всього ₴" in current[1:TOTAL_COL]:
+            return  # вже готово (нова розмітка — G, стара — B)
 
         header = ["Реклама"] + META_COLS + ["Всього ₴"]
         for m in range(1, 13):
@@ -188,7 +185,15 @@ class AdsSumsSheet:
             new_rows = self._append_ads(new_titles)
             row_map.update(new_rows)
 
-        col_idx = col_for_date(target_date)
+        # Розмітка визначається за заголовком: «Всього ₴» у G (нова, з 17.11) або в B (стара).
+        hdr = self.service.spreadsheets().values().get(
+            spreadsheetId=self.spreadsheet_id, range=f"{self.sheet_name}!A1:{TOTAL_COL_LETTER}1",
+        ).execute().get("values", [[]])[0]
+        shift = 0 if (len(hdr) >= TOTAL_COL and hdr[TOTAL_COL - 1] == "Всього ₴") else len(META_COLS)
+        total_letter = col_letter(TOTAL_COL - shift)
+        grid_first, grid_last = col_letter(TOTAL_COL + 1 - shift), col_letter(LAST_COL_INDEX - shift)
+
+        col_idx = col_for_date(target_date) - shift
         col_str = col_letter(col_idx)
 
         # 1. Читаємо поточні значення в стовпці цієї дати — щоб знайти реклами,
@@ -233,8 +238,8 @@ class AdsSumsSheet:
         for title in sums_by_ad:
             row = row_map[title]
             updates.append({
-                "range": f"{self.sheet_name}!{TOTAL_COL_LETTER}{row}",
-                "values": [[f"=SUM({FIRST_GRID_COL_LETTER}{row}:{TOTAL_FORMULA_END_COL}{row})"]],
+                "range": f"{self.sheet_name}!{total_letter}{row}",
+                "values": [[f"=SUM({grid_first}{row}:{grid_last}{row})"]],
             })
 
         if not updates:
