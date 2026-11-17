@@ -100,23 +100,24 @@ def main(d_end: date):
         if r.get(30, {}).get("spend", 0) < 1:
             continue
         r["status"] = ad_status(r["ids"])
-        line = [r["name"], r["status"]]
+        main_part, ref_part = [], []
         for w in WINDOWS:
             m = r.get(w, {"spend": 0, "chats": 0, "rev": 0})
             ch, sp, rv = m["chats"], m["spend"], m["rev"]
-            pc = round(rv / ch) if ch else None
-            line += [round(sp), int(ch), round(sp / ch) if ch else "", round(rv), pc if pc is not None else "",
-                     round(rv / sp, 2) if sp else ""]
             r[f"roas{w}"], r[f"ch{w}"] = (rv / sp if sp else None), ch
+            main_part += [round(sp), round(rv)]
+            ref_part += [int(ch), round(sp / ch) if ch else "", round(rv / ch) if ch else ""]
         use = 7 if r["ch7"] >= MIN_CHATS else 30
-        line.append(signal(r[f"roas{use}"], r[f"ch{use}"]) + ("" if use == 7 else " (30 дн.)"))
+        sig = signal(r[f"roas{use}"], r[f"ch{use}"]) + ("" if use == 7 else " (30 дн.)")
+        roas = [round(r[f"roas{w}"], 2) if r[f"roas{w}"] is not None else "" for w in WINDOWS]
+        line = [r["name"], r["status"], sig] + roas + main_part + [""] + ref_part
         rows.append((r["status"] != "активне", -(r.get(7, {}).get("spend", 0)), -(r[30]["spend"]), line))
     rows.sort(key=lambda x: x[:3])
     hdr1 = [f"Оновлено {datetime.now(ZoneInfo('Europe/Kyiv')):%d.%m %H:%M} · дані по {d_end:%d.%m} · кабінет Skin One new · "
-            f"дохід = замовлення з вкладки «Інстаграм» по назві оголошення"]
-    hdr2 = ["Оголошення", "Статус"] + sum([[f"Витрати {w}д", f"Заявки {w}д", f"Ціна заявки {w}д", f"Дохід {w}д",
-                                             f"Дохід/заявку {w}д", f"ROAS {w}д"] for w in WINDOWS], []) + \
-           ["Сигнал за ROAS (🟢≥2,5 · 🟡1,8–2,49 · 🔴<1,8; 7 дн., або 30 дн. якщо заявок <10)"]
+            f"ROAS = дохід ÷ витрати; дохід = замовлення з вкладки «Інстаграм» по назві оголошення; беззбитковість ≈ 1,8"]
+    hdr2 = ["Оголошення", "Статус", "Сигнал (🟢 ROAS ≥2,5 · 🟡 1,8–2,49 · 🔴 <1,8; за 7 дн., або 30 дн. якщо заявок <10)",
+            "ROAS 7д", "ROAS 30д", "Витрати 7д", "Дохід 7д", "Витрати 30д", "Дохід 30д",
+            "Довідка →", "Заявки 7д", "Ціна заявки 7д", "Дохід/заявку 7д", "Заявки 30д", "Ціна заявки 30д", "Дохід/заявку 30д"]
     values = [hdr1, hdr2] + [x[3] for x in rows]
 
     meta = svc.spreadsheets().get(spreadsheetId=SHEET_ID, fields="sheets.properties").execute()
@@ -142,5 +143,5 @@ def main(d_end: date):
 if __name__ == "__main__":
     d = date.fromisoformat(sys.argv[1]) if len(sys.argv) > 1 else datetime.now(ZoneInfo("Europe/Kyiv")).date() - timedelta(1)
     for v in main(d)[2:]:
-        if v[1] == "активне" or v[2]:
+        if v[1] == "активне":
             print(" | ".join(str(x) for x in v))
