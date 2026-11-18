@@ -120,7 +120,8 @@ async def collect(day: date, exclude=(), order_day=None) -> dict:
         skip = {str(n) for n in exclude}
         forced = {str(k): v for k, v in (order_day or {}).items()}
         # Замовлення з сайту рахуємо в день підтвердження (користувач 03.11), решту — в день створення
-        wide = await s.get_orders_exact(a - timedelta(days=SITE_LOOKBACK), b)
+        # замовлення з mgr_order_day могли створити пізніше (напр. забули оформити) — тягнемо до +7 днів
+        wide = await s.get_orders_exact(a - timedelta(days=SITE_LOOKBACK), b + timedelta(days=7) if forced else b)
         orders = [o for o in wide if str(o.get("orderNumber")) not in skip and (
             forced[str(o.get("orderNumber"))] == day.isoformat() if str(o.get("orderNumber")) in forced
             else confirm_day(o) == day if SITE_PREFIX in (o.get("managerComment") or "")
