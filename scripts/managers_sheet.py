@@ -109,18 +109,21 @@ def channel_of_chat(chat):
     return None
 
 
-async def collect(day: date, exclude=()) -> dict:
+async def collect(day: date, exclude=(), order_day=None) -> dict:
     """{блок: {"Instagram": {L,S,TO}, …, "rep": n, "items": n}} лише для менеджерок із замовленнями дня.
-    exclude — № замовлень, які не рахуємо (напр. покупки менеджерок для себе)."""
+    exclude — № замовлень, які не рахуємо (напр. покупки менеджерок для себе).
+    order_day — {№: "YYYY-MM-DD"}: разово рахувати замовлення в указаний день (override mgr_order_day)."""
     s = SitniksClient()
     try:
         a = KIEV.localize(datetime(day.year, day.month, day.day))
         b = a + timedelta(days=1)
         skip = {str(n) for n in exclude}
+        forced = {str(k): v for k, v in (order_day or {}).items()}
         # Замовлення з сайту рахуємо в день підтвердження (користувач 03.11), решту — в день створення
         wide = await s.get_orders_exact(a - timedelta(days=SITE_LOOKBACK), b)
         orders = [o for o in wide if str(o.get("orderNumber")) not in skip and (
-            confirm_day(o) == day if SITE_PREFIX in (o.get("managerComment") or "")
+            forced[str(o.get("orderNumber"))] == day.isoformat() if str(o.get("orderNumber")) in forced
+            else confirm_day(o) == day if SITE_PREFIX in (o.get("managerComment") or "")
             else a <= datetime.fromisoformat(o["createdAt"].replace("Z", "+00:00")) < b)]
         chats = await s.get_all_chats(a.astimezone(pytz.utc), b.astimezone(pytz.utc), by_first_message=True)
         chat_of = {}

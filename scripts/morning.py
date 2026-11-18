@@ -388,7 +388,7 @@ def main():
 
         def mgr_data(day):
             if day not in cache:
-                cache[day] = retry(lambda: asyncio.run(ms.collect(day, ov.get("mgr_exclude_orders", []))))
+                cache[day] = retry(lambda: asyncio.run(ms.collect(day, ov.get("mgr_exclude_orders", []), ov.get("mgr_order_day", {}))))
             return cache[day]
         if mgr_days:
             print("Звіт по менеджерам")
