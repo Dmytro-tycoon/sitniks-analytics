@@ -67,6 +67,35 @@ def site_channel(comment: str) -> str:
     return "Сайт прямі"  # без мітки реклами
 
 
+def _cost_promo() -> dict:
+    """config/morning_overrides.json → cost_promo: закупівля зі знижкою на час акції постачальника.
+    {"from": "YYYY-MM-DD", "to": "YYYY-MM-DD", "factor": 0.6, "full_cost": {sku: повна собівартість}}.
+    Замовлення зберігають собівартість на момент створення, тому для позицій зі старою (повною) собівартістю
+    в межах дат множимо її на factor (Rejuran ЧП −40% закупівлі, користувач 19.11.2026)."""
+    try:
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "morning_overrides.json")
+        return json.load(open(path, encoding="utf-8")).get("cost_promo") or {}
+    except Exception:
+        return {}
+
+
+_CP = None
+
+
+def promo_cost(p: dict, day: date) -> float:
+    global _CP
+    if _CP is None:
+        _CP = _cost_promo()
+    cost = float(p.get("costPrice") or 0)
+    if not _CP or not (_CP["from"] <= day.isoformat() <= _CP["to"]):
+        return cost
+    sku = p.get("sku") or (p.get("productVariation") or {}).get("sku")
+    full = (_CP.get("full_cost") or {}).get(sku)
+    if full and cost >= float(full) * 0.99:
+        return cost * float(_CP.get("factor", 1))
+    return cost
+
+
 async def collect(day: date, site_overrides: dict = None) -> dict:
     """site_overrides: {order_id: канал} — рішення користувача по окремих замовленнях
     (config/morning_overrides.json → rnp_site_channel), напр. «без UTM (fbclid)» → «Сайт ФБ».
@@ -116,7 +145,7 @@ async def collect(day: date, site_overrides: dict = None) -> dict:
         if not is_countable_order(o):
             continue
         to = float(o.get("totalPriceDiscount") or 0)
-        cost = sum(float(p.get("costPrice") or 0) * float(p.get("quantity") or 1) for p in o.get("products", []))
+        cost = sum(promo_cost(p, day) * float(p.get("quantity") or 1) for p in o.get("products", []))
         st[ch]["to"] += to
         st[ch]["margin"] += to - cost
         st[ch]["sales"] += 1
