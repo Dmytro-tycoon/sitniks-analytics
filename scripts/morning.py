@@ -22,6 +22,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import sys
 import time
 import urllib.request
@@ -257,6 +258,28 @@ def payments(d1, d2, ov, prev_state):
     return res["state"]
 
 
+REQUISITES_RE = re.compile(r"UA\s?\d{2}(?:\s?\d){25}|(?<!\d)\d{4}(?:[\s-]?\d{4}){3}(?!\d)|отримувач|реквізит", re.I)
+
+
+def receipt_times(msgs, lo):
+    """Час квитанцій у чаті: вкладення від КЛІЄНТА (без managerName), надіслане після того, як менеджерка
+    дала реквізити (IBAN / номер картки / «Найменування отримувача»), або PDF-документ від клієнта.
+    Фото товарів від менеджерки й фото шкіри до реквізитів — не квитанції (користувач 22.11.2026)."""
+    out, req_at = [], None
+    for m in sorted(msgs, key=lambda m: m.get("createdAt", "")):
+        t = datetime.fromisoformat(m["createdAt"].replace("Z", "+00:00")).astimezone(ms.KIEV)
+        if m.get("managerName"):
+            if REQUISITES_RE.search(m.get("text") or ""):
+                req_at = t
+            continue
+        if not m.get("attachmentUrl") or m.get("createdAt", "") < lo.isoformat():
+            continue
+        is_doc = (m.get("messageType") or "").lower() in ("file", "document") or ".pdf" in m["attachmentUrl"].lower()
+        if is_doc or (req_at and (t - req_at) <= timedelta(days=3)):
+            out.append(t)
+    return out
+
+
 def triage(res):
     """Підказки: для кожного ❌ — невідомі платежі, що підходять за сумою (і сума двох платежів), з часом скріну
     в чаті замовлення; для кожного ❓ — замовлення з такою передоплатою/сумою ±1 день і скрін у чаті поруч за часом.
@@ -280,9 +303,7 @@ def triage(res):
                 if not cid:
                     continue
                 msgs = await s.get_chat_messages(cid)
-                shots[str(o.get("orderNumber"))] = sorted(
-                    datetime.fromisoformat(m["createdAt"].replace("Z", "+00:00")).astimezone(ms.KIEV)
-                    for m in msgs if m.get("attachmentUrl") and m.get("createdAt", "") >= f"{lo.isoformat()}")
+                shots[str(o.get("orderNumber"))] = receipt_times(msgs, lo)
             return orders, shots
         finally:
             await s.close()
@@ -305,13 +326,13 @@ def triage(res):
             if abs(p["amount"] - r["expected"]) <= TRIAGE_TOL and abs((p["date"] - r["day"]).days) <= 1:
                 sh = near_shot(r["n"], pdt(p))
                 cand.append((gap(sh, pdt(p)), f"{money(p['amount'])} ₴ {p['payer']} {p['dt'][:5]} {p['dt'][-5:]}"
-                             + (f" — скрін у чаті {sh:%H:%M} ✓" if sh else "")))
+                             + (f" — квитанція в чаті {sh:%H:%M} ✓" if sh else "")))
         for i, a in enumerate(unknown):  # оплата двома частинами
             for b in unknown[i + 1:]:
                 if abs(a["amount"] + b["amount"] - r["expected"]) <= TRIAGE_TOL and abs((a["date"] - r["day"]).days) <= 1:
                     cand.append((5000, f"{money(a['amount'])} + {money(b['amount'])} ₴ ({a['payer']} {a['dt'][-5:]}, {b['payer']} {b['dt'][-5:]})"))
         sh = shots.get(str(r["n"]), [])
-        tail = f"скріни в чаті: {', '.join(f'{x:%d.%m %H:%M}' for x in sh[-3:])}" if sh else "скрінів у чаті немає / чат не прив'язаний"
+        tail = f"квитанції в чаті: {', '.join(f'{x:%d.%m %H:%M}' for x in sh[-3:])}" if sh else "квитанцій у чаті немає / чат не прив'язаний"
         txt = "; ".join(c for _, c in sorted(cand)[:3]) or "збігів серед невідомих платежів немає"
         print(f"  ❌ №{r['n']} {r['client']}: {txt} | {tail}")
     for p in unknown:
@@ -327,7 +348,7 @@ def triage(res):
             sh = near_shot(n, t)
             nm = ((o.get("client") or {}).get("fullname") or "").strip()
             st = ((o.get("status") or {}).get("title") or "").strip()
-            cand.append((gap(sh, t), f"№{n} {nm} ({st})" + (f" — скрін {sh:%H:%M} ✓" if sh else "")))
+            cand.append((gap(sh, t), f"№{n} {nm} ({st})" + (f" — квитанція {sh:%H:%M} ✓" if sh else "")))
         txt = "; ".join(c for _, c in sorted(cand)[:3]) or "замовлень з такою сумою немає"
         print(f"  ❓ {money(p['amount'])} ₴ {p['payer']} {p['dt']}: {txt}")
 
