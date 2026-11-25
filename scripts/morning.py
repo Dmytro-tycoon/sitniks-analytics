@@ -258,6 +258,50 @@ def payments(d1, d2, ov, prev_state):
     return res["state"]
 
 
+# Власні замовлення менеджерок у статистику не рахуємо (користувач 25.11.2026). Збіг = прізвище + ім'я
+# (основи слів) або телефон. Додаткові телефони — config/morning_overrides.json → "manager_phones": {"Даша": ["0930787395"]}.
+MANAGER_SELF = {
+    "Даша": (("кокшаров",), ("даш", "дар")),
+    "Віка": (("тумаш",), ("вік", "вiк")),
+    "Ліза": (("чернявськ", "чернявск"), ("єлизав", "лиза", "ліза", "елизав", "лиз")),
+    "Діана": (("кириченк",), ("діан", "диан")),
+}
+MANAGER_PHONES = {"Ліза": ["0634729387"], "Даша": ["0930787395"]}
+
+
+def own_orders_check(d1, d2, ov):
+    """Підказка: замовлення за d1…d2, де клієнтка — сама менеджерка, а № ще не в mgr_exclude_orders."""
+    from src.sitniks.client import SitniksClient
+    excl = {str(x) for x in ov.get("mgr_exclude_orders", [])}
+    phones = {m: {p[-9:] for p in ps} for m, ps in MANAGER_PHONES.items()}
+    for m, ps in (ov.get("manager_phones") or {}).items():
+        phones.setdefault(m, set()).update(p[-9:] for p in ps)
+
+    async def fetch():
+        s = SitniksClient()
+        try:
+            return await s.get_orders_exact(ms.KIEV.localize(datetime(d1.year, d1.month, d1.day)),
+                                            ms.KIEV.localize(datetime(d2.year, d2.month, d2.day)) + timedelta(days=1))
+        finally:
+            await s.close()
+    found = []
+    for o in retry(lambda: asyncio.run(fetch())):
+        n = str(o.get("orderNumber"))
+        if n in excl:
+            continue
+        c = o.get("client") or {}
+        name = (c.get("fullname") or "").lower().replace("'", "").replace("’", "")
+        tokens = re.findall(r"\w+", name)
+        ph = re.sub(r"\D", "", str(c.get("phone") or ""))[-9:]
+        for m, (sur, first) in MANAGER_SELF.items():
+            by_name = any(t.startswith(sur) for t in tokens) and any(t.startswith(first) for t in tokens)
+            if by_name or (ph and ph in phones.get(m, ())):
+                found.append(f"№{n} {c.get('fullname','').strip()} ({float(o.get('totalPriceDiscount') or 0):,.0f} ₴) — схоже на {m}".replace(",", " "))
+                break
+    for f in found:
+        print(f"  ⚠️ Власне замовлення менеджерки? {f} → якщо так, додати в mgr_exclude_orders")
+
+
 REQUISITES_RE = re.compile(r"UA\s?\d{2}(?:\s?\d){25}|(?<!\d)\d{4}(?:[\s-]?\d{4}){3}(?!\d)|отримувач|реквізит", re.I)
 
 
@@ -413,6 +457,10 @@ def main():
             return cache[day]
         if mgr_days:
             print("Звіт по менеджерам")
+            try:
+                own_orders_check(mgr_days[0], mgr_days[-1], ov)
+            except Exception as e:  # перевірка — підказка, не критично
+                print(f"  (перевірка власних замовлень менеджерок не вдалась: {type(e).__name__}: {e})")
         for d in mgr_days:
             if not a.dry and not ms.has_channel_tab(d):
                 ms.create_month(d.year, d.month)
