@@ -379,12 +379,22 @@ def triage(res):
         tail = f"квитанції в чаті: {', '.join(f'{x:%d.%m %H:%M}' for x in sh[-3:])}" if sh else "квитанцій у чаті немає / чат не прив'язаний"
         txt = "; ".join(c for _, c in sorted(cand)[:3]) or "збігів серед невідомих платежів немає"
         print(f"  ❌ №{r['n']} {r['client']}: {txt} | {tail}")
+    # Уже оплачені замовлення не пропонуємо для невідомих платежів (№19425 Брус: передоплата 200 прийшла,
+    # а скрипт підсовував його під 1 162 ₴ Баришенських лише за повною сумою 1 165 — користувач 26.11.2026).
+    paid = ({str(r["n"]) for k in ("ok", "sum_diff", "other_payer", "recovered") for r, _ in res.get(k, [])}
+            | {str(r["n"]) for r in res.get("confirmed", [])})
+    open_n = {str(r["n"]) for r in unpaid}
     for p in unknown:
         t, cand = pdt(p), []
         for n, o in byn.items():
             pre = float((o.get("payment") or {}).get("amount") or 0)
             tot = float(o.get("totalPriceDiscount") or 0)
-            if not (abs(pre - p["amount"]) <= TRIAGE_TOL or abs(tot - p["amount"]) <= TRIAGE_TOL):
+            if n in paid:
+                continue
+            by_pre = abs(pre - p["amount"]) <= TRIAGE_TOL
+            # за повною сумою — лише якщо передоплати в Sitniks немає або вона ще не знайдена у виписці
+            by_tot = abs(tot - p["amount"]) <= TRIAGE_TOL and (not pre or n in open_n)
+            if not (by_pre or by_tot):
                 continue
             cr = datetime.fromisoformat(o["createdAt"].replace("Z", "+00:00")).astimezone(ms.KIEV)
             if abs((cr.date() - p["date"]).days) > 1:
