@@ -112,6 +112,17 @@ def setup_scheduler() -> AsyncIOScheduler:
             id="daily_hair_stats",
             replace_existing=True,
         )
+    # Автодотиск «спитала ціну й замовкла» (A/B, з 27.11.2026). FOLLOWUP_MODE: off | shadow (default) | live.
+    # 11:00 і 16:00 разом покривають усіх клієнток у вікні 3–22 год тиші.
+    from src.followup.price_silent import followup_job, mode as followup_mode
+    if followup_mode() != "off":
+        scheduler.add_job(
+            followup_job,
+            CronTrigger(hour="11,16", minute=0, timezone=KIEV_TZ),
+            id="followup_price_silent",
+            replace_existing=True,
+            misfire_grace_time=30 * 60,
+        )
     # daily_ads_sheet_job більше НЕ окремим cron — write_daily_sums_to_sheet
     # тепер викликається інлайн наприкінці send_daily_ads_report (05:20),
     # щоб уникнути конкуренції за Sitniks API rate-limit.
