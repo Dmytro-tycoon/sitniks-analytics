@@ -1,8 +1,11 @@
-"""ROAS по оголошеннях → стовпчики B..F вкладок «Інстаграм» і «Сайт» («Ефективність реклами 2»).
+"""Окупність по оголошеннях → стовпчики B..F вкладок «Інстаграм» і «Сайт» («Ефективність реклами 2»).
 
-B Кабінет · C Статус · D Сигнал · E ROAS 7 днів · F ROAS 30 днів  (вікно закінчується днем d_end).
+B Кабінет · C Статус · D Сигнал · E Окупність 7 днів · F Окупність 30 днів  (вікно закінчується днем d_end).
 
-ROAS = дохід ÷ витрати. Дохід — суми з сітки дат цієї ж вкладки (замовлення по мітці реклами).
+Окупність = маржа ÷ витрати (метрика власника, 28.11.2026). Маржа = дохід оголошення × маржинальність
+каналу за те саме вікно з РНП («Рука на пульсі», рядки 40 ТО і 42 маржа): «Інстаграм» — канали
+Інстаграм+ФБ, «Сайт» — Сайт ФБ+Сайт Гугл+Сайт прямі. Дохід — суми з сітки дат цієї ж вкладки.
+Наближення: для акційних оголошень реальна маржа нижча за середню каналу.
 Витрати:
   «Інстаграм» — реклама на переписку (optimization_goal REPLIES/CONVERSATIONS):
       Skin One new — Meta API; основний кабінет — CSV з Ads Manager
@@ -11,8 +14,9 @@ ROAS = дохід ÷ витрати. Дохід — суми з сітки да�
   «Сайт» — мітка «meta / <кампанія> / <ID групи/оголошення> / … (fbclid)»: витрати Skin One new
       по цьому ID (група оголошень, оголошення або кампанія); «… (gclid)» — увесь Google Ads.
       Мітки без ID / без реклами (прямі, link_in_bio, бот…) — порожньо.
-Сигнал (за 7 днів; якщо витрат за 7 днів < MIN_SPEND — за 30 днів):
-  🟢 ROAS ≥ 2,5 · 🟡 1,8–2,49 (біля беззбитковості) · 🔴 < 1,8 · ⚪ мало даних.
+Сигнал (за 7 днів; якщо витрат за 7 днів < MIN_SPEND — за 30 днів), «м'які» пороги для окремого
+оголошення (таблиця бачить лише ~55–60% продажів реклами; пороги каналу — у РНП: IG/FB ≥2,5, сайт ≥1,5):
+  Інстаграм: 🟢 ≥ 1,6 · 🟡 1,0–1,6 · 🔴 < 1,0;  Сайт: 🟢 ≥ 1,2 · 🟡 0,8–1,2 · 🔴 < 0,8 · ⚪ мало даних.
 
 Запуск: python scripts/ad_chat_value.py [YYYY-MM-DD]   (за замовчуванням — вчора, Київ)
 """
@@ -37,7 +41,12 @@ SHEET_ID = os.getenv("ADS_SHEET_ID", "1vM6SIydglC0K0b-bZE5woq--2CK-BubXL8yfdnJqw
 ACCOUNT = "act_903156589086283"  # Skin One new
 MSG_GOALS = {"REPLIES", "CONVERSATIONS"}
 WINDOWS = (7, 30)
-GOOD, BAD = 2.5, 1.8
+THRESH = {"ig": (1.6, 1.0), "site": (1.2, 0.8)}  # (🟢 від, 🟡 від) — окупність за маржею
+RNP_ID = "1U-JZBWFBb-zFMpBGF-h50lFgUKtRnN5zyLkuQofiKyI"
+RNP_MONTHS = ["Січень", "Лютий", "Березень", "Квітень", "Травень", "Червень", "Липень", "Серпень",
+              "Вересень", "Жовтень", "Листопад", "Грудень"]
+CHANNELS = {"ig": ("Інстаграм", "ФБ"), "site": ("Сайт ФБ", "Сайт Гугл", "Сайт прямі")}
+DEFAULT_MARGIN = 0.55
 MIN_SPEND = 500  # ₴ за вікно сигналу; менше — «мало даних»
 MAIN_DIR = os.path.expanduser("~/Documents/ШІ/morning_tools/ads_main")
 OLD_TAB = "Дохід на заявку"
@@ -121,21 +130,73 @@ def revenue(row: list, d_end: date, days: int) -> float:
     return sum(float(row[c]) for c in cols if c < len(row) and isinstance(row[c], (int, float)))
 
 
-def signal(sp7, rv7, sp30, rv30):
+def _num(x):
+    return float(x) if isinstance(x, (int, float)) else 0.0
+
+
+def rnp_margins(svc, d_end: date) -> dict:
+    """{(kind, w): маржинальність} з РНП за останні w днів по d_end. Без даних — DEFAULT_MARGIN."""
+    days = {}  # date → {канал або "День": (ТО, маржа)}
+    need = {(d_end - timedelta(i)).replace(day=1) for i in range(max(WINDOWS))}
+    for m in sorted(need):
+        tab = f"РНП День ({RNP_MONTHS[m.month - 1]})"
+        try:
+            rows = svc.spreadsheets().values().get(spreadsheetId=RNP_ID, range=f"'{tab}'!A38:JZ42",
+                                                   valueRenderOption="UNFORMATTED_VALUE").execute().get("values", [])
+        except Exception as e:  # noqa: BLE001
+            print(f"[ad_chat_value] РНП {tab}: {e}")
+            continue
+        if len(rows) < 5:
+            continue
+        r38, r39, to, mar = rows[0], rows[1], rows[2], rows[4]
+        for i, v in enumerate(r38):
+            if i == 0 or not isinstance(v, (int, float)) or not 1 <= v <= 31:
+                continue
+            try:
+                d = date(m.year, m.month, int(v))
+            except ValueError:
+                continue
+            cell = lambda row, c: _num(row[c]) if c < len(row) else 0.0
+            rec = {"День": (cell(to, i), cell(mar, i))}
+            for c in range(max(1, i - 5), i):
+                if c < len(r39) and r39[c]:
+                    rec[str(r39[c])] = (cell(to, c), cell(mar, c))
+            days[d] = rec
+    out = {}
+    for kind, chans in CHANNELS.items():
+        for w in WINDOWS:
+            t = mg = 0.0
+            for i in range(w):
+                rec = days.get(d_end - timedelta(i), {})
+                for ch in chans:
+                    a, b = rec.get(ch, (0.0, 0.0))
+                    t += a
+                    mg += b
+            if t <= 0:  # немає канальних колонок (старі місяці) — беремо день
+                for i in range(w):
+                    a, b = days.get(d_end - timedelta(i), {}).get("День", (0.0, 0.0))
+                    t += a
+                    mg += b
+            out[(kind, w)] = mg / t if t > 0 and 0.2 < mg / t < 0.9 else DEFAULT_MARGIN
+    return out
+
+
+def signal(kind, sp7, rv7, sp30, rv30, mp):
+    good, bad = THRESH[kind]
     if sp7 >= MIN_SPEND:
-        roas, tag = rv7 / sp7, ""
+        roas, tag = rv7 * mp[(kind, 7)] / sp7, ""
     elif sp30 >= MIN_SPEND:
-        roas, tag = rv30 / sp30, " (30 дн.)"
+        roas, tag = rv30 * mp[(kind, 30)] / sp30, " (30 дн.)"
     else:
         return "⚪ мало даних"
-    return ("🟢" if roas >= GOOD else "🟡" if roas >= BAD else "🔴") + tag
+    return ("🟢" if roas >= good else "🟡" if roas >= bad else "🔴") + tag
 
 
-def fmt_roas(rv, sp):
-    return round(rv / sp, 2) if sp >= 1 else ""
+def fmt_roas(rv, sp, margin):
+    return round(rv * margin / sp, 2) if sp >= 1 else ""
 
 
-def build_instagram(rows, d_end, ads, active_ids, mains):
+def build_instagram(rows, d_end, ads, active_ids, mains, mp):
     """{row_index: [Кабінет, Статус, Сигнал, ROAS7, ROAS30]}"""
     new = {w: {} for w in WINDOWS}   # назва → [витрати, ids]
     for w in WINDOWS:
@@ -161,11 +222,12 @@ def build_instagram(rows, d_end, ads, active_ids, mains):
         else:
             continue
         rv = {w: revenue(r, d_end, w) for w in WINDOWS}
-        out[i] = [acct, status, signal(sp[7], rv[7], sp[30], rv[30]), fmt_roas(rv[7], sp[7]), fmt_roas(rv[30], sp[30])]
+        out[i] = [acct, status, signal("ig", sp[7], rv[7], sp[30], rv[30], mp),
+                  fmt_roas(rv[7], sp[7], mp[("ig", 7)]), fmt_roas(rv[30], sp[30], mp[("ig", 30)])]
     return out
 
 
-def build_site(rows, d_end, ads, active_ids, g_spend, g_active):
+def build_site(rows, d_end, ads, active_ids, g_spend, g_active, mp):
     by_id = {w: {} for w in WINDOWS}
     for w in WINDOWS:
         for x in ads[w]:
@@ -191,7 +253,8 @@ def build_site(rows, d_end, ads, active_ids, g_spend, g_active):
             acct, status = "Skin One new", ("активне" if key in active_ids else "вимкнене")
         if sp[30] < 1:
             continue
-        line = [acct, status, signal(sp[7], rv[7], sp[30], rv[30]), fmt_roas(rv[7], sp[7]), fmt_roas(rv[30], sp[30])]
+        line = [acct, status, signal("site", sp[7], rv[7], sp[30], rv[30], mp),
+                fmt_roas(rv[7], sp[7], mp[("site", 7)]), fmt_roas(rv[30], sp[30], mp[("site", 30)])]
         for i in idx:
             out[i] = line
     return out
@@ -224,18 +287,23 @@ def main(d_end: date):
     except Exception as e:  # Google Ads недоступний — сайт без Google
         print(f"[ad_chat_value] Google Ads: {e}")
         g_spend, g_act = {w: 0.0 for w in WINDOWS}, False
+    mp = rnp_margins(svc, d_end)
     stamp = f"{datetime.now(ZoneInfo('Europe/Kyiv')):%d.%m %H:%M}"
-    base = (f"Оновлено {stamp}, дані по {d_end:%d.%m}. ROAS = дохід ÷ витрати; беззбитковість ≈ 1,8.\n"
-            f"🟢 ≥2,5 · 🟡 1,8–2,49 · 🔴 <1,8 · ⚪ мало даних (витрат <{MIN_SPEND} ₴ і за 7, і за 30 днів). "
-            f"Сигнал за 7 днів; «(30 дн.)» — якщо за 7 днів витрат <{MIN_SPEND} ₴.")
+    pc = lambda k, w: f"{mp[(k, w)] * 100:.1f}%"
+    base = (f"Оновлено {stamp}, дані по {d_end:%d.%m}. Окупність = маржа ÷ витрати; маржа = дохід оголошення × "
+            f"маржинальність каналу з РНП (Інстаграм+ФБ: {pc('ig', 7)} за 7 дн., {pc('ig', 30)} за 30 дн.; "
+            f"сайт: {pc('site', 7)} / {pc('site', 30)}). Беззбитковість = 1,0.\n"
+            f"Пороги для окремого оголошення (бачимо ~55–60% продажів реклами): Інстаграм 🟢 ≥1,6 · 🟡 1,0–1,6 · 🔴 <1,0; "
+            f"Сайт 🟢 ≥1,2 · 🟡 0,8–1,2 · 🔴 <0,8; ⚪ мало даних (витрат <{MIN_SPEND} ₴ і за 7, і за 30 днів). "
+            f"Сигнал за 7 днів; «(30 дн.)» — якщо за 7 днів витрат <{MIN_SPEND} ₴. Акційні оголошення: реальна маржа нижча.")
 
     ig_rows = read_tab(svc, SHEET_NAME, d_end)
-    ig = build_instagram(ig_rows, d_end, ads, active_ids, mains)
+    ig = build_instagram(ig_rows, d_end, ads, active_ids, mains, mp)
     main_note = "основний кабінет — CSV з Ads Manager" if mains[30] else "основний кабінет НЕ враховано (немає CSV за цей день)"
     write(svc, SHEET_NAME, ig_rows, ig, base + f"\nІнстаграм: реклама на переписку; Skin One new — API, {main_note}.")
 
     site_rows = read_tab(svc, WEBSITE_SHEET_NAME, d_end)
-    site = build_site(site_rows, d_end, ads, active_ids, g_spend, g_act)
+    site = build_site(site_rows, d_end, ads, active_ids, g_spend, g_act, mp)
     write(svc, WEBSITE_SHEET_NAME, site_rows, site,
           base + "\nСайт: витрати Skin One new за ID групи/оголошення з мітки; (gclid) — увесь Google Ads.")
 
@@ -244,7 +312,8 @@ def main(d_end: date):
     if old:
         svc.spreadsheets().batchUpdate(spreadsheetId=SHEET_ID, body={"requests": [{"deleteSheet": {"sheetId": old[0]}}]}).execute()
 
-    print(f"[ad_chat_value] {d_end}: Інстаграм {len(ig)} рядків, Сайт {len(site)} рядків"
+    print(f"[ad_chat_value] {d_end}: маржа {pc('ig', 7)}/{pc('ig', 30)} · сайт {pc('site', 7)}/{pc('site', 30)}; "
+          f"Інстаграм {len(ig)} рядків, Сайт {len(site)} рядків"
           f"{'' if mains[30] else ' (основний кабінет без CSV)'}")
     return ig_rows, ig, site_rows, site
 
