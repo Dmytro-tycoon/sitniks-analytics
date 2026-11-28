@@ -67,6 +67,29 @@ def site_channel(comment: str) -> str:
     return "Сайт прямі"  # без мітки реклами
 
 
+# Подарунок клієнтці (користувач 28.11.2026): за замовлення від 3 000 ₴ (сума після знижки, включно) ми
+# оплачуємо доставку НП і даруємо маску Biodance → віднімаємо з маржі (рядок 42).
+#   доставка 131 ₴ = середня по акту НП №НП-019861989 (59 відправлень від 3 000 ₴, 03–19.11.2026);
+#   маска 190 ₴ = опт KR Brands 759 ₴ / 4 шт (усі 5 видів однакові);
+#   сайт (замовлення з форми): з 01.11; доставка від 2 000 ₴ до 02.11 включно, з 03.11 — від 3 000;
+#   чати (Інстаграм/ФБ): з 28.11 (01–27.11 не перераховуємо — маски окремою статтею в P&L);
+#   самовивіз (у delivery немає міста) — лише маска.
+# P&L: доставка вже є в рахунках НП (рядок 33) → у собівартості P&L відняту тут доставку додаємо назад
+# (st[ch]["ship"]); маски залишаються в собівартості.
+GIFT_SHIP, GIFT_MASK, GIFT_FROM = 131.0, 190.0, 3000.0
+SITE_GIFTS_FROM, SITE_SHIP_3000_FROM, CHAT_GIFTS_FROM = date(2026, 11, 1), date(2026, 11, 3), date(2026, 11, 28)
+
+
+def gift_cost(o: dict, day: date, is_site: bool):
+    """(доставка ₴, масок шт) подарунка за замовлення."""
+    if day < (SITE_GIFTS_FROM if is_site else CHAT_GIFTS_FROM):
+        return 0.0, 0
+    to = float(o.get("totalPriceDiscount") or 0)
+    ship_from = 2000.0 if is_site and day < SITE_SHIP_3000_FROM else GIFT_FROM
+    pickup = not str((o.get("delivery") or {}).get("city") or "").strip()
+    return (GIFT_SHIP if to >= ship_from and not pickup else 0.0), (1 if to >= GIFT_FROM else 0)
+
+
 def _cost_promo() -> dict:
     """config/morning_overrides.json → cost_promo: закупівля зі знижкою на час акції постачальника.
     {"from": "YYYY-MM-DD", "to": "YYYY-MM-DD", "factor": 0.6, "full_cost": {sku: повна собівартість}}.
@@ -122,7 +145,8 @@ async def collect(day: date, site_overrides: dict = None) -> dict:
     chat_cache = {}
     for o in orders:
         comment = o.get("managerComment") or ""
-        if SITE_PREFIX in comment:  # менеджер може дописати нотатку на початку
+        is_site = SITE_PREFIX in comment
+        if is_site:  # менеджер може дописати нотатку на початку
             ch = site_overrides.get(str(o.get("id"))) or site_channel(comment)
             st[ch]["leads"] += 1
         else:
@@ -147,7 +171,10 @@ async def collect(day: date, site_overrides: dict = None) -> dict:
         to = float(o.get("totalPriceDiscount") or 0)
         cost = sum(promo_cost(p, day) * float(p.get("quantity") or 1) for p in o.get("products", []))
         st[ch]["to"] += to
-        st[ch]["margin"] += to - cost
+        ship, masks = gift_cost(o, day, is_site)
+        st[ch]["margin"] += to - cost - ship - masks * GIFT_MASK
+        st[ch]["ship"] += ship
+        st[ch]["masks"] += masks
         st[ch]["sales"] += 1
         st[ch]["repeat"] += repeat_clients.is_repeat(o, index)
         st[ch]["items"] += sum(float(p.get("quantity") or 1) for p in o.get("products", []))

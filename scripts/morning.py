@@ -97,7 +97,9 @@ def rnp_day(day, ov, prev, dry):
         with contextlib.redirect_stdout(io.StringIO()):  # без «→ колонка …»
             retry(fc.write, day, st, ads, skip_ad_channels=manual)
     cur = {ch: {"to": round(st[ch]["to"], 2), "sales": int(st[ch]["sales"]), "leads": int(st[ch]["leads"]),
-                "orders": st["_orders"][ch]} for ch in fc.CHANNELS}
+                "orders": st["_orders"][ch],
+                # подарунок від 3 000 ₴ (доставка + маска Biodance), відняті з маржі; для P&L доставку додати назад
+                "ship": round(st[ch]["ship"], 2), "masks": int(st[ch]["masks"])} for ch in fc.CHANNELS}
     tot_to = sum(c["to"] for c in cur.values())
     tot_s = sum(c["sales"] for c in cur.values())
     head = f" {day:%d.%m}:"
